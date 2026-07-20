@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ctp_proxy}
+      POSTGRES_USER: ${POSTGRES_USER:-ctp_proxy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ctp_proxy_change_me}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  ctp-proxy:
+    build: .
+    platform: linux/amd64
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ctp_proxy}:${POSTGRES_PASSWORD:-ctp_proxy_change_me}@postgres:5432/${POSTGRES_DB:-ctp_proxy}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${ZMQ_PUB_PORT:-5565}:${ZMQ_PUB_PORT:-5565}"
+      - "${ZMQ_REP_PORT:-5566}:${ZMQ_REP_PORT:-5566}"
+    volumes:
+      - ./flow:/app/flow
+      - ./logs:/app/logs
+
+volumes:
+  postgres-data:
