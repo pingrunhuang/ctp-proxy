@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17-bookworm
+    image: public.ecr.aws/docker/library/postgres:17-bookworm
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ctp_proxy}
@@ -20,6 +20,11 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      LANG: C
+      LC_ALL: C
+      # The process must listen on the container interface for published ports
+      # to be reachable by an engine running on the Docker host.
+      ZMQ_BIND_HOST: 0.0.0.0
       DATABASE_URL: postgresql://${POSTGRES_USER:-ctp_proxy}:${POSTGRES_PASSWORD:-ctp_proxy_change_me}@postgres:5432/${POSTGRES_DB:-ctp_proxy}
     depends_on:
       postgres:

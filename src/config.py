@@ -67,7 +67,10 @@ class Settings:
             auth_code=os.getenv("CTP_AUTH_CODE", "0000000000000000"),
             front_md=normalize_front(os.getenv("CTP_FRONT_MD", "")),
             front_td=normalize_front(os.getenv("CTP_FRONT_TD", "")),
-            production_mode=_bool_env("CTP_PRODUCTION_MODE", True),
+            production_mode=_bool_env(
+                "CTP_B_IS_PRODUCTION_MODE",
+                _bool_env("CTP_PRODUCTION_MODE", True),
+            ),
             initial_symbols=_symbols_env("CTP_SYMBOLS"),
             zmq_bind_host=os.getenv("ZMQ_BIND_HOST", "0.0.0.0"),
             zmq_pub_port=_int_env("ZMQ_PUB_PORT", 5565),

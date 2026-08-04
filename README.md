@@ -65,6 +65,10 @@ docker compose up --build -d
 docker compose logs -f
 ```
 
+Compose 在容器内强制使用 `0.0.0.0` 监听 ZeroMQ，使宿主机上的交易引擎可通过
+发布的 `5565/5566` 端口连接。镜像同时包含 CTP Linux SDK 在 Apple Silicon
+的 `linux/amd64` 模拟环境下所需的 `zh_CN.GB18030` locale。
+
 systemd：
 
 ```bash
@@ -86,6 +90,7 @@ sudo systemctl enable --now ctp-proxy.service
 | `CTP_AUTH_CODE` | 认证码 | 必填 |
 | `CTP_FRONT_MD` | 行情前置地址 | 必填 |
 | `CTP_FRONT_TD` | 交易前置地址 | 必填 |
+| `CTP_B_IS_PRODUCTION_MODE` | 传给 CTP MD/TD API 的生产模式标志；兼容旧变量 `CTP_PRODUCTION_MODE` | `true` |
 | `CTP_SYMBOLS` | 启动时订阅的合约，逗号分隔 | 空 |
 | `ZMQ_PUB_PORT` | 事件发布端口 | `5565` |
 | `ZMQ_REP_PORT` | 命令端口 | `5566` |
