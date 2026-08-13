@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm AS locale-builder
+FROM python:3.12-bookworm AS locale-builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends locales \
@@ -10,13 +10,15 @@ RUN mkdir -p /opt/locale \
         --charmap=GB18030 \
         /opt/locale/zh_CN.GB18030
 
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
+
+RUN pip install --no-cache-dir uv
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \

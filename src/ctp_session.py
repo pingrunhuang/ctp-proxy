@@ -113,7 +113,15 @@ class CtpMdSpi(mdapi.CThostFtdcMdSpi):
         request.BrokerID = self.session.settings.broker_id
         request.UserID = self.session.settings.user_id
         request.Password = self.session.settings.password
-        self.session.md_api.ReqUserLogin(request, self.session.next_request_id())
+        result = self.session.md_api.ReqUserLogin(
+            request,
+            self.session.next_request_id(),
+        )
+        if result:
+            self.session.publish_status(
+                "MD_LOGIN_REQUEST_FAILED",
+                error=f"return_code={result}",
+            )
 
     def OnFrontDisconnected(self, reason: int) -> None:
         self.session.md_ready.clear()
@@ -185,7 +193,15 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         request.UserID = self.session.settings.user_id
         request.AppID = self.session.settings.app_id
         request.AuthCode = self.session.settings.auth_code
-        self.session.td_api.ReqAuthenticate(request, self.session.next_request_id())
+        result = self.session.td_api.ReqAuthenticate(
+            request,
+            self.session.next_request_id(),
+        )
+        if result:
+            self.session.publish_status(
+                "TD_AUTH_REQUEST_FAILED",
+                error=f"return_code={result}",
+            )
 
     def OnFrontDisconnected(self, reason: int) -> None:
         self.session.td_ready.clear()
@@ -200,7 +216,15 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         request.BrokerID = self.session.settings.broker_id
         request.UserID = self.session.settings.user_id
         request.Password = self.session.settings.password
-        self.session.td_api.ReqUserLogin(request, self.session.next_request_id())
+        result = self.session.td_api.ReqUserLogin(
+            request,
+            self.session.next_request_id(),
+        )
+        if result:
+            self.session.publish_status(
+                "TD_LOGIN_REQUEST_FAILED",
+                error=f"return_code={result}",
+            )
 
     def OnRspUserLogin(self, login: Any, info: Any, _request_id: int, _last: bool) -> None:
         error = _error(info)
@@ -213,7 +237,15 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         request = tdapi.CThostFtdcSettlementInfoConfirmField()
         request.BrokerID = self.session.settings.broker_id
         request.InvestorID = self.session.settings.user_id
-        self.session.td_api.ReqSettlementInfoConfirm(request, self.session.next_request_id())
+        result = self.session.td_api.ReqSettlementInfoConfirm(
+            request,
+            self.session.next_request_id(),
+        )
+        if result:
+            self.session.publish_status(
+                "SETTLEMENT_CONFIRM_REQUEST_FAILED",
+                error=f"return_code={result}",
+            )
 
     def OnRspSettlementInfoConfirm(self, _response: Any, info: Any, _request_id: int, _last: bool) -> None:
         error = _error(info)
@@ -385,12 +417,26 @@ class CtpSession:
         self.td_api.Init()
         md_ok = self.md_ready.wait(timeout)
         td_ok = self.td_ready.wait(timeout)
+        if not (md_ok and td_ok):
+            logger.error(
+                "CTP session is not ready after login wait: "
+                "md_ready={} td_ready={} timeout_seconds={}",
+                md_ok,
+                td_ok,
+                timeout,
+            )
         return md_ok and td_ok
 
     def is_ready(self) -> bool:
         return self.md_ready.is_set() and self.td_ready.is_set()
 
     def publish_status(self, status: str, **details: Any) -> None:
+        if status.endswith("_FAILED"):
+            logger.error("CTP session status={} details={}", status, details)
+        elif status.endswith("_DISCONNECTED"):
+            logger.warning("CTP session status={} details={}", status, details)
+        else:
+            logger.info("CTP session status={} details={}", status, details)
         self.publish("status.CTP", "status", {"gateway_name": "CTP", "status": status, **details})
 
     def subscribe_market_data(self, symbols: list[str]) -> None:
