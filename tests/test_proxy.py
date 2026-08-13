@@ -130,8 +130,10 @@ class FakeSession:
 def proxy(tmp_path):
     settings = Settings(
         broker_id="9999",
-        user_id="test",
-        password="secret",
+        md_user_id="md-test",
+        md_password="md-secret",
+        td_user_id="test",
+        td_password="secret",
         app_id="app",
         auth_code="auth",
         front_md="tcp://md",

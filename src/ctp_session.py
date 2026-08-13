@@ -111,8 +111,8 @@ class CtpMdSpi(mdapi.CThostFtdcMdSpi):
         logger.info("CTP MD connected; logging in")
         request = mdapi.CThostFtdcReqUserLoginField()
         request.BrokerID = self.session.settings.broker_id
-        request.UserID = self.session.settings.user_id
-        request.Password = self.session.settings.password
+        request.UserID = self.session.settings.md_user_id
+        request.Password = self.session.settings.md_password
         result = self.session.md_api.ReqUserLogin(
             request,
             self.session.next_request_id(),
@@ -191,7 +191,7 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         self.session.publish_status("TD_CONNECTED")
         request = tdapi.CThostFtdcReqAuthenticateField()
         request.BrokerID = self.session.settings.broker_id
-        request.UserID = self.session.settings.user_id
+        request.UserID = self.session.settings.td_user_id
         request.AppID = self.session.settings.app_id
         request.AuthCode = self.session.settings.auth_code
         result = self.session.td_api.ReqAuthenticate(
@@ -215,8 +215,8 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
             return
         request = tdapi.CThostFtdcReqUserLoginField()
         request.BrokerID = self.session.settings.broker_id
-        request.UserID = self.session.settings.user_id
-        request.Password = self.session.settings.password
+        request.UserID = self.session.settings.td_user_id
+        request.Password = self.session.settings.td_password
         result = self.session.td_api.ReqUserLogin(
             request,
             self.session.next_request_id(),
@@ -237,7 +237,7 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         self.order_ref = int(_text(getattr(login, "MaxOrderRef", "0")) or "0")
         request = tdapi.CThostFtdcSettlementInfoConfirmField()
         request.BrokerID = self.session.settings.broker_id
-        request.InvestorID = self.session.settings.user_id
+        request.InvestorID = self.session.settings.td_user_id
         result = self.session.td_api.ReqSettlementInfoConfirm(
             request,
             self.session.next_request_id(),
@@ -264,7 +264,7 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         if data is not None:
             account = {
                 "gateway_name": "CTP",
-                "account_id": _text(getattr(data, "AccountID", "")) or self.session.settings.user_id,
+                "account_id": _text(getattr(data, "AccountID", "")) or self.session.settings.td_user_id,
                 "currency": _text(getattr(data, "CurrencyID", "")) or "CNY",
                 "balance": _finite(getattr(data, "Balance", 0)),
                 "available": _finite(getattr(data, "Available", 0)),
@@ -324,7 +324,7 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
             positions = list(self.position_buffer.values())
             self.position_buffer.clear()
             self.session.cache.put("positions", positions)
-            self.session.publish(f"positions.{self.session.settings.user_id}", "positions", positions)
+            self.session.publish(f"positions.{self.session.settings.td_user_id}", "positions", positions)
             self.session.complete_query("positions", positions)
 
     def OnRspQryOrder(self, data: Any, info: Any, _request_id: int, last: bool) -> None:
@@ -500,7 +500,7 @@ class CtpSession:
         def send(request_id: int) -> int:
             request = tdapi.CThostFtdcQryTradingAccountField()
             request.BrokerID = self.settings.broker_id
-            request.InvestorID = self.settings.user_id
+            request.InvestorID = self.settings.td_user_id
             return self.td_api.ReqQryTradingAccount(request, request_id)
 
         return self._query("account", send, max_age_seconds)
@@ -509,7 +509,7 @@ class CtpSession:
         def send(request_id: int) -> int:
             request = tdapi.CThostFtdcQryInvestorPositionField()
             request.BrokerID = self.settings.broker_id
-            request.InvestorID = self.settings.user_id
+            request.InvestorID = self.settings.td_user_id
             return self.td_api.ReqQryInvestorPosition(request, request_id)
 
         return self._query("positions", send, max_age_seconds)
@@ -518,7 +518,7 @@ class CtpSession:
         def send(request_id: int) -> int:
             request = tdapi.CThostFtdcQryOrderField()
             request.BrokerID = self.settings.broker_id
-            request.InvestorID = self.settings.user_id
+            request.InvestorID = self.settings.td_user_id
             return self.td_api.ReqQryOrder(request, request_id)
 
         return self._query("orders", send, max_age_seconds)
@@ -543,8 +543,8 @@ class CtpSession:
 
         order = tdapi.CThostFtdcInputOrderField()
         order.BrokerID = self.settings.broker_id
-        order.InvestorID = self.settings.user_id
-        order.UserID = self.settings.user_id
+        order.InvestorID = self.settings.td_user_id
+        order.UserID = self.settings.td_user_id
         order.InstrumentID = str(request["symbol"])
         if request.get("exchange"):
             order.ExchangeID = str(request["exchange"])
@@ -590,8 +590,8 @@ class CtpSession:
         source = record or request
         action = tdapi.CThostFtdcInputOrderActionField()
         action.BrokerID = self.settings.broker_id
-        action.InvestorID = self.settings.user_id
-        action.UserID = self.settings.user_id
+        action.InvestorID = self.settings.td_user_id
+        action.UserID = self.settings.td_user_id
         action.InstrumentID = str(source.get("symbol", ""))
         action.ExchangeID = str(source.get("exchange_id", source.get("exchange", "")) or "")
         action.OrderRef = str(source.get("order_ref", "") or "")
@@ -620,7 +620,7 @@ class CtpSession:
         )
         return {
             "gateway_name": "CTP",
-            "account_id": self.settings.user_id,
+            "account_id": self.settings.td_user_id,
             "client_id": owner.get("client_id"),
             "strategy_id": owner.get("strategy_id"),
             "client_order_id": owner.get("client_order_id"),
@@ -647,7 +647,7 @@ class CtpSession:
         ) or {}
         return {
             "gateway_name": "CTP",
-            "account_id": self.settings.user_id,
+            "account_id": self.settings.td_user_id,
             "client_id": owner.get("client_id"),
             "strategy_id": owner.get("strategy_id"),
             "client_order_id": owner.get("client_order_id"),
@@ -665,14 +665,14 @@ class CtpSession:
         }
 
     def publish_order(self, payload: dict[str, Any]) -> None:
-        self.publish(f"orders.{self.settings.user_id}", "order", payload)
+        self.publish(f"orders.{self.settings.td_user_id}", "order", payload)
         if payload.get("strategy_id"):
-            self.publish(f"orders.{self.settings.user_id}.{payload['strategy_id']}", "order", payload)
+            self.publish(f"orders.{self.settings.td_user_id}.{payload['strategy_id']}", "order", payload)
 
     def publish_trade(self, payload: dict[str, Any]) -> None:
-        self.publish(f"trades.{self.settings.user_id}", "trade", payload)
+        self.publish(f"trades.{self.settings.td_user_id}", "trade", payload)
         if payload.get("strategy_id"):
-            self.publish(f"trades.{self.settings.user_id}.{payload['strategy_id']}", "trade", payload)
+            self.publish(f"trades.{self.settings.td_user_id}.{payload['strategy_id']}", "trade", payload)
 
     def close(self) -> None:
         self.md_ready.clear()

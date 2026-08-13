@@ -83,11 +83,13 @@ sudo systemctl enable --now ctp-proxy.service
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
-| `CTP_BROKER_ID` | 经纪商代码 | 必填 |
-| `CTP_USER_ID` | 投资者账号 | 必填 |
-| `CTP_PASSWORD` | 密码 | 必填 |
-| `CTP_APP_ID` | 穿透式监管 AppID | 必填 |
-| `CTP_AUTH_CODE` | 认证码 | 必填 |
+| `CTP_BROKER_ID` | MD/TD 共用的经纪商代码 | 必填 |
+| `CTP_APP_ID` | 交易穿透式监管 AppID | 必填 |
+| `CTP_AUTH_CODE` | 交易认证码 | 必填 |
+| `CTP_MD_USER_ID` | 行情登录账号 | 必填 |
+| `CTP_MD_PASSWORD` | 行情登录密码 | 必填 |
+| `CTP_TD_USER_ID` | 交易投资者账号 | 必填 |
+| `CTP_TD_PASSWORD` | 交易登录密码 | 必填 |
 | `CTP_FRONT_MD` | 行情前置地址 | 必填 |
 | `CTP_FRONT_TD` | 交易前置地址 | 必填 |
 | `CTP_B_IS_PRODUCTION_MODE` | 传给 CTP MD/TD API 的生产模式标志；兼容旧变量 `CTP_PRODUCTION_MODE` | `true` |
@@ -101,11 +103,19 @@ sudo systemctl enable --now ctp-proxy.service
 | `DATABASE_POOL_MAX_SIZE` | 最大数据库连接数 | `5` |
 | `DATABASE_CONNECT_TIMEOUT_SECONDS` | 数据库启动连接超时 | `10` |
 
+MD 与 TD 分别配置用户和密码，并共用 `CTP_BROKER_ID`、`CTP_APP_ID` 和
+`CTP_AUTH_CODE`。为兼容旧部署，MD/TD 用户和密码未设置时仍会回退到
+`CTP_USER_ID` 和 `CTP_PASSWORD`。订单、成交、账户和持仓消息中的
+`account_id` 以及对应 topic 均使用 `CTP_TD_USER_ID`。
+
 Proxy 启动时会连接 PostgreSQL，并自动创建 `ctp_orders` 表和幂等键、CTP 订单 ID 相关索引。数据库不可用时服务启动失败，不会在缺少持久化保护的情况下接受订单。
 
-Docker Compose 会同时启动 PostgreSQL，并使用具名卷 `postgres-data` 保存数据。部署前必须在 `.env` 中更换示例密码：
+Docker Compose 会同时启动 PostgreSQL，并将数据保存到 `.env` 中
+`POSTGRES_DATA_DIR` 指定的宿主机目录；默认是项目目录下的 `./data`。
+部署前必须在 `.env` 中更换示例密码：
 
 ```env
+POSTGRES_DATA_DIR=./data
 POSTGRES_DB=ctp_proxy
 POSTGRES_USER=ctp_proxy
 POSTGRES_PASSWORD=使用强密码

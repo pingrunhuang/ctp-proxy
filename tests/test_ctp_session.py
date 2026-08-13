@@ -8,7 +8,7 @@ from loguru import logger
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import ctp_session
-from ctp_session import CtpMdSpi, CtpSession
+from ctp_session import CtpMdSpi, CtpSession, CtpTraderSpi
 
 
 class StatusPublisher:
@@ -79,9 +79,9 @@ def test_immediate_md_login_request_failure_is_logged(monkeypatch):
 
     publisher = StatusPublisher()
     publisher.settings = SimpleNamespace(
-        broker_id="9999",
-        user_id="test",
-        password="secret",
+        broker_id="shared-broker",
+        md_user_id="md-user",
+        md_password="md-secret",
     )
     publisher.md_api = MdApi()
     publisher.next_request_id = lambda: 1
@@ -112,3 +112,68 @@ def test_immediate_md_login_request_failure_is_logged(monkeypatch):
         and "return_code=-2" in record["message"]
         for record in records
     )
+
+
+def test_td_authentication_and_login_use_td_credentials(monkeypatch):
+    class AuthRequest:
+        pass
+
+    class LoginRequest:
+        pass
+
+    class TdApi:
+        def __init__(self):
+            self.auth_request = None
+            self.login_request = None
+
+        def ReqAuthenticate(self, request, _request_id):
+            self.auth_request = request
+            return 0
+
+        def ReqUserLogin(self, request, _request_id):
+            self.login_request = request
+            return 0
+
+    publisher = StatusPublisher()
+    publisher.settings = SimpleNamespace(
+        broker_id="shared-broker",
+        td_user_id="td-user",
+        td_password="td-secret",
+        app_id="shared-app",
+        auth_code="shared-auth",
+    )
+    publisher.td_api = TdApi()
+    publisher.next_request_id = lambda: 1
+    publisher.publish_status = lambda status, **details: CtpSession.publish_status(
+        publisher,
+        status,
+        **details,
+    )
+    monkeypatch.setattr(
+        ctp_session.tdapi,
+        "CThostFtdcReqAuthenticateField",
+        AuthRequest,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ctp_session.tdapi,
+        "CThostFtdcReqUserLoginField",
+        LoginRequest,
+        raising=False,
+    )
+
+    spi = CtpTraderSpi(publisher)
+    spi.OnFrontConnected()
+    spi.OnRspAuthenticate(None, SimpleNamespace(ErrorID=0), 1, True)
+
+    assert vars(publisher.td_api.auth_request) == {
+        "BrokerID": "shared-broker",
+        "UserID": "td-user",
+        "AppID": "shared-app",
+        "AuthCode": "shared-auth",
+    }
+    assert vars(publisher.td_api.login_request) == {
+        "BrokerID": "shared-broker",
+        "UserID": "td-user",
+        "Password": "td-secret",
+    }

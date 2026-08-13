@@ -27,6 +27,11 @@ def _symbols_env(name: str) -> list[str]:
     return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
 
 
+def _env_with_legacy_fallback(name: str, legacy_name: str, default: str = "") -> str:
+    value = os.getenv(name)
+    return os.getenv(legacy_name, default) if value is None else value
+
+
 def normalize_front(value: str) -> str:
     value = value.strip()
     if value and "://" not in value:
@@ -37,8 +42,10 @@ def normalize_front(value: str) -> str:
 @dataclass(slots=True)
 class Settings:
     broker_id: str
-    user_id: str
-    password: str
+    md_user_id: str
+    md_password: str
+    td_user_id: str
+    td_password: str
     app_id: str
     auth_code: str
     front_md: str
@@ -61,8 +68,10 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             broker_id=os.getenv("CTP_BROKER_ID", ""),
-            user_id=os.getenv("CTP_USER_ID", ""),
-            password=os.getenv("CTP_PASSWORD", ""),
+            md_user_id=_env_with_legacy_fallback("CTP_MD_USER_ID", "CTP_USER_ID"),
+            md_password=_env_with_legacy_fallback("CTP_MD_PASSWORD", "CTP_PASSWORD"),
+            td_user_id=_env_with_legacy_fallback("CTP_TD_USER_ID", "CTP_USER_ID"),
+            td_password=_env_with_legacy_fallback("CTP_TD_PASSWORD", "CTP_PASSWORD"),
             app_id=os.getenv("CTP_APP_ID", "simnow_client_test"),
             auth_code=os.getenv("CTP_AUTH_CODE", "0000000000000000"),
             front_md=normalize_front(os.getenv("CTP_FRONT_MD", "")),
@@ -95,8 +104,10 @@ class Settings:
             name
             for name, value in {
                 "CTP_BROKER_ID": self.broker_id,
-                "CTP_USER_ID": self.user_id,
-                "CTP_PASSWORD": self.password,
+                "CTP_MD_USER_ID (or CTP_USER_ID)": self.md_user_id,
+                "CTP_MD_PASSWORD (or CTP_PASSWORD)": self.md_password,
+                "CTP_TD_USER_ID (or CTP_USER_ID)": self.td_user_id,
+                "CTP_TD_PASSWORD (or CTP_PASSWORD)": self.td_password,
                 "CTP_APP_ID": self.app_id,
                 "CTP_AUTH_CODE": self.auth_code,
                 "CTP_FRONT_MD": self.front_md,
