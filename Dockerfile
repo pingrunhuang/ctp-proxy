@@ -23,7 +23,10 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    UV_HTTP_RETRIES=5 \
+    UV_HTTP_TIMEOUT=120 \
+    UV_CONCURRENT_DOWNLOADS=4
 
 RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" \
         /etc/apt/sources.list.d/debian.sources \
@@ -38,7 +41,8 @@ RUN curl --retry 5 --retry-all-errors --fail --location --silent --show-error \
     && rm /tmp/uv-installer.sh
 
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
 COPY --from=locale-builder /opt/locale/zh_CN.GB18030 /usr/lib/locale/zh_CN.GB18030
 
