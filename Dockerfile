@@ -1,6 +1,10 @@
 FROM python:3.12-bookworm AS locale-builder
 
-RUN apt-get update \
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
+
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=60 update \
     && apt-get install -y --no-install-recommends locales \
     && rm -rf /var/lib/apt/lists/*
 
@@ -13,6 +17,7 @@ RUN mkdir -p /opt/locale \
 FROM python:3.12-slim-bookworm
 
 ARG UV_VERSION=0.11.32
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 
 WORKDIR /app
 
@@ -20,7 +25,9 @@ ENV PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
-RUN apt-get update \
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=60 update \
     && apt-get install -y --no-install-recommends ca-certificates curl libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 

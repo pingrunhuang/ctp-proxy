@@ -214,3 +214,13 @@ uv run python src/command_example.py '{"action":"ping"}'
 - PUB/SUB 不保证离线事件补发。订单映射已持久化，但客户端重连后仍应调用账户、持仓和委托查询恢复快照。
 - 人工终端或其他 CTP 客户端产生的订单没有 `strategy_id`，只会发布到账户级 topic。
 - 当前没有策略级资金、持仓分账，也没有策略级风险额度。
+
+
+# Docker 相关
+
+如果清华源在你的网络下仍然较慢，可以切换到 USTC：
+docker compose build \
+  --build-arg DEBIAN_MIRROR=https://mirrors.ustc.edu.cn
+也可切回 Debian 官方源：
+docker compose build \
+  --build-arg DEBIAN_MIRROR=https://deb.debian.org
