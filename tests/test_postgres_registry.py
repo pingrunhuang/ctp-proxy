@@ -30,6 +30,9 @@ def test_postgres_order_registry_round_trip():
             client_order_id=client_order_id,
             symbol="au2608",
             order_ref="9001",
+            front_id=1,
+            session_id=2,
+            exchange_id="SHFE",
             payload='{"source":"pytest"}',
         )
         assert not registry.create(
@@ -38,19 +41,24 @@ def test_postgres_order_registry_round_trip():
             client_order_id=client_order_id,
             symbol="au2608",
             order_ref="9002",
+            front_id=1,
+            session_id=2,
+            exchange_id="SHFE",
             payload="{}",
         )
+        raw_order_sys_id = "         SYS-9001  "
         registry.update_ctp(
             order_ref="9001",
             front_id=1,
             session_id=2,
             exchange_id="SHFE",
-            order_sys_id="SYS-9001",
+            order_sys_id=raw_order_sys_id,
             status="SUBMITTED",
         )
         order = registry.get("pytest", "registry", client_order_id)
-        assert order["order_sys_id"] == "SYS-9001"
-        assert registry.find_by_ctp(exchange_id="SHFE", order_sys_id="SYS-9001")["strategy_id"] == "registry"
+        assert order["order_sys_id"] == raw_order_sys_id
+        assert registry.find_by_ctp(order_ref="9001", front_id=1, session_id=2)["strategy_id"] == "registry"
+        assert registry.find_by_ctp(exchange_id="SHFE", order_sys_id=raw_order_sys_id)["strategy_id"] == "registry"
         assert registry.is_healthy()
     finally:
         with registry._pool.connection() as connection:

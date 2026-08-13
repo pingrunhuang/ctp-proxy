@@ -17,7 +17,19 @@ class InMemoryOrderRegistry:
         self.orders = {}
         self.closed = False
 
-    def create(self, *, client_id, strategy_id, client_order_id, symbol, order_ref, payload):
+    def create(
+        self,
+        *,
+        client_id,
+        strategy_id,
+        client_order_id,
+        symbol,
+        order_ref,
+        front_id,
+        session_id,
+        exchange_id,
+        payload,
+    ):
         key = (client_id, strategy_id, client_order_id)
         if key in self.orders:
             return False
@@ -27,20 +39,37 @@ class InMemoryOrderRegistry:
             "client_order_id": client_order_id,
             "symbol": symbol,
             "order_ref": order_ref,
+            "front_id": front_id,
+            "session_id": session_id,
+            "exchange_id": exchange_id,
             "payload": payload,
-            "status": "ACCEPTED",
+            "status": "PENDING_SUBMIT",
         }
         return True
 
     def get(self, client_id, strategy_id, client_order_id):
         return self.orders.get((client_id, strategy_id, client_order_id))
 
-    def find_by_ctp(self, order_ref="", exchange_id="", order_sys_id=""):
+    def find_by_ctp(
+        self,
+        order_ref="",
+        exchange_id="",
+        order_sys_id="",
+        front_id=0,
+        session_id=0,
+    ):
         return next(
             (
                 order
                 for order in self.orders.values()
-                if (order_ref and order.get("order_ref") == order_ref)
+                if (
+                    front_id
+                    and session_id
+                    and order_ref
+                    and order.get("front_id") == front_id
+                    and order.get("session_id") == session_id
+                    and order.get("order_ref") == order_ref
+                )
                 or (
                     exchange_id
                     and order_sys_id
@@ -52,7 +81,11 @@ class InMemoryOrderRegistry:
         )
 
     def update_ctp(self, *, order_ref, front_id, session_id, exchange_id, order_sys_id, status):
-        order = self.find_by_ctp(order_ref=order_ref)
+        order = self.find_by_ctp(
+            order_ref=order_ref,
+            front_id=front_id,
+            session_id=session_id,
+        )
         if order:
             order.update(
                 front_id=front_id,
@@ -246,12 +279,61 @@ def test_queries_use_default_cache_ttl_and_force_refresh(proxy):
 
 def test_order_registry_contract_is_idempotent():
     registry = InMemoryOrderRegistry()
-    assert registry.create(client_id="c", strategy_id="s", client_order_id="1", symbol="au", order_ref="10", payload="{}")
-    assert not registry.create(client_id="c", strategy_id="s", client_order_id="1", symbol="au", order_ref="11", payload="{}")
+    assert registry.create(
+        client_id="c",
+        strategy_id="s",
+        client_order_id="1",
+        symbol="au",
+        order_ref="10",
+        front_id=2,
+        session_id=3,
+        exchange_id="SHFE",
+        payload="{}",
+    )
+    assert not registry.create(
+        client_id="c",
+        strategy_id="s",
+        client_order_id="1",
+        symbol="au",
+        order_ref="11",
+        front_id=2,
+        session_id=3,
+        exchange_id="SHFE",
+        payload="{}",
+    )
     registry.update_ctp(order_ref="10", front_id=2, session_id=3, exchange_id="SHFE", order_sys_id="sys", status="SUBMITTED")
     assert registry.get("c", "s", "1")["order_sys_id"] == "sys"
+    assert registry.find_by_ctp(order_ref="10", front_id=2, session_id=3)["strategy_id"] == "s"
     assert registry.find_by_ctp(exchange_id="SHFE", order_sys_id="sys")["strategy_id"] == "s"
     registry.close()
+
+
+def test_order_registry_distinguishes_same_order_ref_across_sessions():
+    registry = InMemoryOrderRegistry()
+    for client_order_id, session_id in (("old", 3), ("new", 4)):
+        assert registry.create(
+            client_id="c",
+            strategy_id="s",
+            client_order_id=client_order_id,
+            symbol="au",
+            order_ref="10",
+            front_id=2,
+            session_id=session_id,
+            exchange_id="SHFE",
+            payload="{}",
+        )
+
+    registry.update_ctp(
+        order_ref="10",
+        front_id=2,
+        session_id=4,
+        exchange_id="SHFE",
+        order_sys_id="new-sys-id",
+        status="SUBMITTED",
+    )
+
+    assert registry.get("c", "s", "old").get("order_sys_id") is None
+    assert registry.get("c", "s", "new")["order_sys_id"] == "new-sys-id"
 
 
 def test_protocol_converts_non_finite_ctp_prices_to_null():

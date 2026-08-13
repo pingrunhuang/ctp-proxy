@@ -31,6 +31,7 @@ except ImportError:
 
 
 Publisher = Callable[[str, str, dict[str, Any]], None]
+CANCELLABLE_ORDER_STATUSES = frozenset({"SUBMITTED", "PARTTRADED"})
 
 
 def _text(value: Any) -> str:
@@ -235,6 +236,7 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         self.front_id = int(getattr(login, "FrontID", 0) or 0)
         self.session_id = int(getattr(login, "SessionID", 0) or 0)
         self.order_ref = int(_text(getattr(login, "MaxOrderRef", "0")) or "0")
+        logger.info(f"TD login success: front_id={self.front_id}, session_id={self.session_id}, order_ref={self.order_ref}")
         request = tdapi.CThostFtdcSettlementInfoConfirmField()
         request.BrokerID = self.session.settings.broker_id
         request.InvestorID = self.session.settings.td_user_id
@@ -353,7 +355,18 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
     def OnRspOrderAction(self, action: Any, info: Any, _request_id: int, _last: bool) -> None:
         error = _error(info)
         if error:
-            self.session.publish("errors.CTP", "cancel_error", {"message": error, "order_ref": _text(getattr(action, "OrderRef", ""))})
+            self.session.publish(
+                "errors.CTP",
+                "cancel_error",
+                {
+                    "message": error,
+                    "order_ref": _text(getattr(action, "OrderRef", "")),
+                    "front_id": int(getattr(action, "FrontID", 0) or 0),
+                    "session_id": int(getattr(action, "SessionID", 0) or 0),
+                    "exchange": _text(getattr(action, "ExchangeID", "")),
+                    "symbol": _text(getattr(action, "InstrumentID", "")),
+                },
+            )
 
     def OnErrRtnOrderAction(self, action: Any, info: Any) -> None:
         self.OnRspOrderAction(action, info, 0, True)
@@ -536,6 +549,9 @@ class CtpSession:
             client_order_id=client_order_id,
             symbol=str(request["symbol"]),
             order_ref=order_ref,
+            front_id=self.td_spi.front_id,
+            session_id=self.td_spi.session_id,
+            exchange_id=str(request.get("exchange", "")),
             payload=json.dumps(request, ensure_ascii=False, sort_keys=True),
         )
         if not inserted:
@@ -570,7 +586,14 @@ class CtpSession:
         order.UserForceClose = 0
         result = self.td_api.ReqOrderInsert(order, self.next_request_id())
         if result:
-            self.order_registry.update_ctp(order_ref=order_ref, front_id=self.td_spi.front_id, session_id=self.td_spi.session_id, exchange_id=str(request.get("exchange", "")), order_sys_id="", status="REJECTED")
+            self.order_registry.update_ctp(
+                order_ref=order_ref,
+                front_id=self.td_spi.front_id,
+                session_id=self.td_spi.session_id,
+                exchange_id=str(request.get("exchange", "")),
+                order_sys_id="",
+                status="REJECTED",
+            )
             raise RuntimeError(f"CTP ReqOrderInsert returned {result}")
         return {
             "accepted": True,
@@ -588,32 +611,69 @@ class CtpSession:
             if record is None:
                 raise ValueError("Unknown client_order_id")
         source = record or request
+        if record is not None:
+            status = str(record.get("status", "")).upper()
+            if status not in CANCELLABLE_ORDER_STATUSES:
+                raise RuntimeError(
+                    "CTP order is not cancellable before an active OnRtnOrder: "
+                    f"client_order_id={request['client_order_id']} status={status or 'UNKNOWN'}"
+                )
+        order_ref = str(source.get("order_ref", "") or "")
+        front_id = int(source.get("front_id", 0) or 0)
+        session_id = int(source.get("session_id", 0) or 0)
+        if not order_ref or not front_id or not session_id:
+            raise RuntimeError(
+                "CTP cancel requires FrontID + SessionID + OrderRef from OnRtnOrder"
+            )
         action = tdapi.CThostFtdcInputOrderActionField()
         action.BrokerID = self.settings.broker_id
         action.InvestorID = self.settings.td_user_id
         action.UserID = self.settings.td_user_id
         action.InstrumentID = str(source.get("symbol", ""))
         action.ExchangeID = str(source.get("exchange_id", source.get("exchange", "")) or "")
-        action.OrderRef = str(source.get("order_ref", "") or "")
-        action.FrontID = int(source.get("front_id", 0) or 0)
-        action.SessionID = int(source.get("session_id", 0) or 0)
-        action.OrderSysID = str(source.get("order_sys_id", "") or "")
+        action.OrderRef = order_ref
+        action.FrontID = front_id
+        action.SessionID = session_id
         action.ActionFlag = tdapi.THOST_FTDC_AF_Delete
-        result = self.td_api.ReqOrderAction(action, self.next_request_id())
+        request_id = self.next_request_id()
+        action.OrderActionRef = request_id
+        result = self.td_api.ReqOrderAction(action, request_id)
         if result:
             raise RuntimeError(f"CTP ReqOrderAction returned {result}")
-        return {"accepted": True, "client_order_id": request.get("client_order_id"), "order_ref": action.OrderRef}
+        return {
+            "accepted": True,
+            "client_order_id": request.get("client_order_id"),
+            "order_ref": action.OrderRef,
+            "front_id": action.FrontID,
+            "session_id": action.SessionID,
+        }
 
     def order_payload(self, data: Any, status: str | None = None, status_message: str | None = None) -> dict[str, Any]:
         order_ref = _text(getattr(data, "OrderRef", ""))
         exchange_id = _text(getattr(data, "ExchangeID", ""))
-        order_sys_id = _text(getattr(data, "OrderSysID", ""))
-        owner = self.order_registry.find_by_ctp(order_ref, exchange_id, order_sys_id) or {}
+        order_sys_id = getattr(data, "OrderSysID", "")
+        front_id = int(
+            getattr(data, "FrontID", 0)
+            or getattr(self.td_spi, "front_id", 0)
+            or 0
+        )
+        session_id = int(
+            getattr(data, "SessionID", 0)
+            or getattr(self.td_spi, "session_id", 0)
+            or 0
+        )
+        owner = self.order_registry.find_by_ctp(
+            order_ref=order_ref,
+            exchange_id=exchange_id,
+            order_sys_id=order_sys_id,
+            front_id=front_id,
+            session_id=session_id,
+        ) or {}
         actual_status = status or _status_from_ctp(getattr(data, "OrderStatus", ""))
         self.order_registry.update_ctp(
             order_ref=order_ref,
-            front_id=int(getattr(data, "FrontID", 0) or 0),
-            session_id=int(getattr(data, "SessionID", 0) or 0),
+            front_id=front_id,
+            session_id=session_id,
             exchange_id=exchange_id,
             order_sys_id=order_sys_id,
             status=actual_status,
@@ -628,8 +688,8 @@ class CtpSession:
             "exchange": exchange_id,
             "order_id": order_sys_id or order_ref,
             "order_ref": order_ref,
-            "front_id": int(getattr(data, "FrontID", 0) or 0),
-            "session_id": int(getattr(data, "SessionID", 0) or 0),
+            "front_id": front_id,
+            "session_id": session_id,
             "direction": _direction_from_ctp(getattr(data, "Direction", "")),
             "offset": _offset_from_ctp(getattr(data, "CombOffsetFlag", "")),
             "price": _finite(getattr(data, "LimitPrice", 0)),
@@ -640,10 +700,11 @@ class CtpSession:
         }
 
     def trade_payload(self, data: Any) -> dict[str, Any]:
+        order_sys_id = getattr(data, "OrderSysID", "")
         owner = self.order_registry.find_by_ctp(
-            _text(getattr(data, "OrderRef", "")),
-            _text(getattr(data, "ExchangeID", "")),
-            _text(getattr(data, "OrderSysID", "")),
+            order_ref=_text(getattr(data, "OrderRef", "")),
+            exchange_id=_text(getattr(data, "ExchangeID", "")),
+            order_sys_id=order_sys_id,
         ) or {}
         return {
             "gateway_name": "CTP",
@@ -654,7 +715,7 @@ class CtpSession:
             "symbol": _text(getattr(data, "InstrumentID", "")),
             "exchange": _text(getattr(data, "ExchangeID", "")),
             "trade_id": _text(getattr(data, "TradeID", "")),
-            "order_id": _text(getattr(data, "OrderSysID", "")),
+            "order_id": order_sys_id,
             "order_ref": _text(getattr(data, "OrderRef", "")),
             "direction": _direction_from_ctp(getattr(data, "Direction", "")),
             "offset": _offset_from_ctp(getattr(data, "OffsetFlag", "")),

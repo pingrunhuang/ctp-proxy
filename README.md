@@ -200,6 +200,11 @@ errors.CTP
 {"action":"cancel_order","client_id":"engine-01","strategy_id":"arb-au","client_order_id":"arb-au-20260720-000001"}
 ```
 
+Proxy 只在收到该订单的活动状态 `OnRtnOrder` 后接受撤单，并使用 CTP 的
+`FrontID + SessionID + OrderRef` 本地三元组定位订单。若订单仍处于
+`PENDING_SUBMIT`，客户端应等待 `SUBMITTED` 或 `PARTTRADED` 订单事件后重试。
+CTP 回报中的固定宽度 `OrderSysID` 会原样写入 PostgreSQL，包括前导和尾随空格。
+
 所有命令响应采用统一格式：
 
 ```json

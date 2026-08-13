@@ -113,20 +113,46 @@ class OrderRegistry:
                 "CREATE INDEX IF NOT EXISTS idx_ctp_orders_order_ref ON ctp_orders(order_ref, updated_at DESC)"
             )
             connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ctp_orders_local_id ON ctp_orders(front_id, session_id, order_ref, updated_at DESC)"
+            )
+            connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ctp_orders_sys_id ON ctp_orders(exchange_id, order_sys_id, updated_at DESC)"
             )
 
-    def create(self, *, client_id: str, strategy_id: str, client_order_id: str, symbol: str, order_ref: str, payload: str) -> bool:
+    def create(
+        self,
+        *,
+        client_id: str,
+        strategy_id: str,
+        client_order_id: str,
+        symbol: str,
+        order_ref: str,
+        front_id: int,
+        session_id: int,
+        exchange_id: str,
+        payload: str,
+    ) -> bool:
         with self._pool.connection() as connection:
             row = connection.execute(
                 """
                 INSERT INTO ctp_orders
-                (client_id, strategy_id, client_order_id, order_ref, symbol, status, payload)
-                VALUES (%s, %s, %s, %s, %s, 'ACCEPTED', %s::jsonb)
+                (client_id, strategy_id, client_order_id, order_ref, front_id,
+                 session_id, exchange_id, symbol, status, payload)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING_SUBMIT', %s::jsonb)
                 ON CONFLICT (client_id, strategy_id, client_order_id) DO NOTHING
                 RETURNING id
                 """,
-                (client_id, strategy_id, client_order_id, order_ref, symbol, payload),
+                (
+                    client_id,
+                    strategy_id,
+                    client_order_id,
+                    order_ref,
+                    front_id,
+                    session_id,
+                    exchange_id,
+                    symbol,
+                    payload,
+                ),
             ).fetchone()
             return row is not None
 
@@ -138,12 +164,23 @@ class OrderRegistry:
             ).fetchone()
             return row
 
-    def find_by_ctp(self, order_ref: str = "", exchange_id: str = "", order_sys_id: str = "") -> dict[str, Any] | None:
+    def find_by_ctp(
+        self,
+        order_ref: str = "",
+        exchange_id: str = "",
+        order_sys_id: str = "",
+        front_id: int = 0,
+        session_id: int = 0,
+    ) -> dict[str, Any] | None:
         with self._pool.connection() as connection:
-            if order_ref:
+            if front_id and session_id and order_ref:
                 row = connection.execute(
-                    "SELECT * FROM ctp_orders WHERE order_ref=%s ORDER BY updated_at DESC LIMIT 1",
-                    (order_ref,),
+                    """
+                    SELECT * FROM ctp_orders
+                    WHERE front_id=%s AND session_id=%s AND order_ref=%s
+                    ORDER BY updated_at DESC LIMIT 1
+                    """,
+                    (front_id, session_id, order_ref),
                 ).fetchone()
                 if row is not None:
                     return row
@@ -151,6 +188,19 @@ class OrderRegistry:
                 row = connection.execute(
                     "SELECT * FROM ctp_orders WHERE exchange_id=%s AND order_sys_id=%s ORDER BY updated_at DESC LIMIT 1",
                     (exchange_id, order_sys_id),
+                ).fetchone()
+                if row is not None:
+                    return row
+            # Compatibility for records created before session identifiers were
+            # persisted. Never fall back to a different, populated CTP session.
+            if order_ref:
+                row = connection.execute(
+                    """
+                    SELECT * FROM ctp_orders
+                    WHERE order_ref=%s AND front_id IS NULL AND session_id IS NULL
+                    ORDER BY updated_at DESC LIMIT 1
+                    """,
+                    (order_ref,),
                 ).fetchone()
                 if row is not None:
                     return row
@@ -164,10 +214,31 @@ class OrderRegistry:
                 SET front_id=%s, session_id=%s, exchange_id=%s, order_sys_id=%s,
                     status=%s, updated_at=NOW()
                 WHERE id = (
-                    SELECT id FROM ctp_orders WHERE order_ref=%s ORDER BY updated_at DESC LIMIT 1
+                    SELECT id FROM ctp_orders
+                    WHERE (
+                        front_id=%s AND session_id=%s AND order_ref=%s
+                    ) OR (
+                        order_ref=%s AND front_id IS NULL AND session_id IS NULL
+                    )
+                    ORDER BY
+                        CASE WHEN front_id=%s AND session_id=%s THEN 0 ELSE 1 END,
+                        updated_at DESC
+                    LIMIT 1
                 )
                 """,
-                (front_id, session_id, exchange_id, order_sys_id, status, order_ref),
+                (
+                    front_id,
+                    session_id,
+                    exchange_id,
+                    order_sys_id,
+                    status,
+                    front_id,
+                    session_id,
+                    order_ref,
+                    order_ref,
+                    front_id,
+                    session_id,
+                ),
             )
 
     def list(self, strategy_id: str | None = None) -> list[dict[str, Any]]:
