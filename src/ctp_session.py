@@ -173,6 +173,7 @@ class CtpMdSpi(mdapi.CThostFtdcMdSpi):
             "int_time": int(f"{compact_time}{millis:03d}") if compact_time.isdigit() else 0,
             "local_time": int(time.time() * 1000),
         }
+        logger.debug(f"Depth MD: {payload}")
         self.session.publish(f"marketdata.CTP.{symbol}", "marketdata", payload)
 
 
