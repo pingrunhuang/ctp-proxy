@@ -396,3 +396,54 @@ def test_order_return_preserves_fixed_width_order_sys_id():
     assert registry.find_kwargs["order_sys_id"] == raw_order_sys_id
     assert registry.update_kwargs["order_sys_id"] == raw_order_sys_id
     assert payload["order_id"] == raw_order_sys_id
+
+
+def test_trade_payload_has_stable_native_fill_identity():
+    class OwnedRegistry:
+        def find_by_ctp(self, **_kwargs):
+            return {
+                "client_id": "engine-01",
+                "strategy_id": "arb-ctp",
+                "client_order_id": "arb-ctp-1",
+            }
+
+    session = CtpSession(
+        SimpleNamespace(
+            td_user_id="td-user",
+            query_min_interval_seconds=0,
+        ),
+        lambda *_args: None,
+        OwnedRegistry(),
+    )
+    fill = SimpleNamespace(
+        OrderRef="7",
+        ExchangeID="SHFE",
+        OrderSysID="         131",
+        InstrumentID="au2610",
+        TradeID="TRADE-1",
+        Direction="0",
+        OffsetFlag="0",
+        Price=812.5,
+        Volume=2,
+        TradeTime="10:31:05",
+        TradingDay="20260814",
+    )
+
+    first = session.trade_payload(fill)
+    repeated = session.trade_payload(fill)
+    different = session.trade_payload(
+        SimpleNamespace(**{**vars(fill), "TradeID": "TRADE-2"})
+    )
+
+    assert first["event_id"] == repeated["event_id"]
+    assert first["event_id"].startswith("trade:ctp:")
+    assert first["event_id"] != different["event_id"]
+    assert first["gateway_name"] == "CTP"
+    assert first["account_id"] == "td-user"
+    assert first["trading_day"] == "20260814"
+    assert first["exchange"] == "SHFE"
+    assert first["trade_id"] == "TRADE-1"
+    assert first["order_id"] == "         131"
+    assert first["client_id"] == "engine-01"
+    assert first["strategy_id"] == "arb-ctp"
+    assert first["client_order_id"] == "arb-ctp-1"
