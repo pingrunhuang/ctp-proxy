@@ -38,10 +38,35 @@ def _text(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _error_details(info: Any) -> dict[str, Any] | None:
+    if info is None:
+        return None
+    error_id = int(getattr(info, "ErrorID", 0) or 0)
+    if not error_id:
+        return None
+    raw_message = getattr(info, "ErrorMsg", "")
+    if isinstance(raw_message, bytes):
+        for encoding in ("utf-8", "gb18030"):
+            try:
+                error_message = raw_message.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            error_message = raw_message.decode("gb18030", errors="replace")
+    else:
+        error_message = str(raw_message or "")
+    error_message = error_message.strip()
+    return {
+        "error": f"{error_id}: {error_message}" if error_message else str(error_id),
+        "error_id": error_id,
+        "error_message": error_message,
+    }
+
+
 def _error(info: Any) -> str | None:
-    if info is not None and getattr(info, "ErrorID", 0):
-        return f"{getattr(info, 'ErrorID', 0)}: {getattr(info, 'ErrorMsg', '')}"
-    return None
+    details = _error_details(info)
+    return None if details is None else str(details["error"])
 
 
 def _finite(value: Any) -> float | None:
@@ -209,10 +234,17 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         self.session.td_ready.clear()
         self.session.publish_status("TD_DISCONNECTED", reason=reason)
 
-    def OnRspAuthenticate(self, _response: Any, info: Any, _request_id: int, _last: bool) -> None:
-        error = _error(info)
-        if error:
-            self.session.publish_status("TD_AUTH_FAILED", error=error)
+    def OnRspAuthenticate(self, _response: Any, info: Any, request_id: int, last: bool) -> None:
+        error_details = _error_details(info)
+        if error_details:
+            self.session.publish_status(
+                "TD_AUTH_FAILED",
+                **error_details,
+                broker_id=self.session.settings.td_broker_id,
+                user_id=self.session.settings.td_user_id,
+                request_id=request_id,
+                is_last=last,
+            )
             return
         request = tdapi.CThostFtdcReqUserLoginField()
         request.BrokerID = self.session.settings.td_broker_id
@@ -228,10 +260,17 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
                 error=f"return_code={result}",
             )
 
-    def OnRspUserLogin(self, login: Any, info: Any, _request_id: int, _last: bool) -> None:
-        error = _error(info)
-        if error:
-            self.session.publish_status("TD_LOGIN_FAILED", error=error)
+    def OnRspUserLogin(self, login: Any, info: Any, request_id: int, last: bool) -> None:
+        error_details = _error_details(info)
+        if error_details:
+            self.session.publish_status(
+                "TD_LOGIN_FAILED",
+                **error_details,
+                broker_id=self.session.settings.td_broker_id,
+                user_id=self.session.settings.td_user_id,
+                request_id=request_id,
+                is_last=last,
+            )
             return
         self.front_id = int(getattr(login, "FrontID", 0) or 0)
         self.session_id = int(getattr(login, "SessionID", 0) or 0)

@@ -189,6 +189,62 @@ def test_td_authentication_and_login_use_td_credentials(monkeypatch):
     }
 
 
+@pytest.mark.parametrize(
+    ("callback_name", "expected_status"),
+    (
+        ("OnRspAuthenticate", "TD_AUTH_FAILED"),
+        ("OnRspUserLogin", "TD_LOGIN_FAILED"),
+    ),
+)
+def test_td_login_errors_log_complete_rsp_info(callback_name, expected_status):
+    publisher = StatusPublisher()
+    publisher.settings = SimpleNamespace(
+        td_broker_id="td-broker",
+        td_user_id="td-user",
+    )
+    publisher.publish_status = lambda status, **details: CtpSession.publish_status(
+        publisher,
+        status,
+        **details,
+    )
+    records = []
+    sink_id = logger.add(lambda message: records.append(message.record))
+
+    try:
+        callback = getattr(CtpTraderSpi(publisher), callback_name)
+        callback(
+            None,
+            SimpleNamespace(ErrorID=7, ErrorMsg="登录信息错误".encode("gb18030")),
+            42,
+            True,
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert publisher.messages[-1] == (
+        "status.CTP",
+        "status",
+        {
+            "gateway_name": "CTP",
+            "status": expected_status,
+            "error": "7: 登录信息错误",
+            "error_id": 7,
+            "error_message": "登录信息错误",
+            "broker_id": "td-broker",
+            "user_id": "td-user",
+            "request_id": 42,
+            "is_last": True,
+        },
+    )
+    assert any(
+        record["level"].name == "ERROR"
+        and f"status={expected_status}" in record["message"]
+        and "登录信息错误" in record["message"]
+        and "request_id" in record["message"]
+        for record in records
+    )
+
+
 class CancelRegistry:
     def __init__(self, record):
         self.record = record
