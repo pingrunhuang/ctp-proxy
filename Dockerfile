@@ -52,4 +52,4 @@ ENV LANG=C \
 COPY src ./src
 RUN mkdir -p flow/md flow/td logs
 
-CMD ["uv", "run", "--no-sync", "python", "src/main.py", "--connect-timeout", "300"]
+CMD ["uv", "run", "--no-sync", "python", "src/main.py"]
