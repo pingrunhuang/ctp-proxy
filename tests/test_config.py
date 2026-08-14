@@ -36,7 +36,8 @@ def test_legacy_production_mode_remains_supported(monkeypatch):
 
 def test_md_and_td_credentials_can_be_configured_separately(monkeypatch):
     values = {
-        "CTP_BROKER_ID": "shared-broker",
+        "CTP_MD_BROKER_ID": "md-broker",
+        "CTP_TD_BROKER_ID": "td-broker",
         "CTP_MD_USER_ID": "md-user",
         "CTP_MD_PASSWORD": "md-secret",
         "CTP_TD_USER_ID": "td-user",
@@ -49,7 +50,8 @@ def test_md_and_td_credentials_can_be_configured_separately(monkeypatch):
 
     settings = Settings.from_env()
 
-    assert settings.broker_id == "shared-broker"
+    assert settings.md_broker_id == "md-broker"
+    assert settings.td_broker_id == "td-broker"
     assert settings.md_user_id == "md-user"
     assert settings.md_password == "md-secret"
     assert settings.td_user_id == "td-user"
@@ -60,6 +62,8 @@ def test_md_and_td_credentials_can_be_configured_separately(monkeypatch):
 
 def test_legacy_credentials_remain_supported(monkeypatch):
     canonical_names = (
+        "CTP_MD_BROKER_ID",
+        "CTP_TD_BROKER_ID",
         "CTP_MD_USER_ID",
         "CTP_MD_PASSWORD",
         "CTP_TD_USER_ID",
@@ -75,7 +79,8 @@ def test_legacy_credentials_remain_supported(monkeypatch):
 
     settings = Settings.from_env()
 
-    assert settings.broker_id == "legacy-broker"
+    assert settings.md_broker_id == "legacy-broker"
+    assert settings.td_broker_id == "legacy-broker"
     assert settings.md_user_id == "legacy-user"
     assert settings.md_password == "legacy-secret"
     assert settings.td_user_id == "legacy-user"

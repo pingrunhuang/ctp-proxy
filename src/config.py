@@ -41,7 +41,8 @@ def normalize_front(value: str) -> str:
 
 @dataclass(slots=True)
 class Settings:
-    broker_id: str
+    md_broker_id: str
+    td_broker_id: str
     md_user_id: str
     md_password: str
     td_user_id: str
@@ -67,7 +68,12 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            broker_id=os.getenv("CTP_BROKER_ID", ""),
+            md_broker_id=_env_with_legacy_fallback(
+                "CTP_MD_BROKER_ID", "CTP_BROKER_ID"
+            ),
+            td_broker_id=_env_with_legacy_fallback(
+                "CTP_TD_BROKER_ID", "CTP_BROKER_ID"
+            ),
             md_user_id=_env_with_legacy_fallback("CTP_MD_USER_ID", "CTP_USER_ID"),
             md_password=_env_with_legacy_fallback("CTP_MD_PASSWORD", "CTP_PASSWORD"),
             td_user_id=_env_with_legacy_fallback("CTP_TD_USER_ID", "CTP_USER_ID"),
@@ -103,7 +109,8 @@ class Settings:
         missing = [
             name
             for name, value in {
-                "CTP_BROKER_ID": self.broker_id,
+                "CTP_MD_BROKER_ID (or CTP_BROKER_ID)": self.md_broker_id,
+                "CTP_TD_BROKER_ID (or CTP_BROKER_ID)": self.td_broker_id,
                 "CTP_MD_USER_ID (or CTP_USER_ID)": self.md_user_id,
                 "CTP_MD_PASSWORD (or CTP_PASSWORD)": self.md_password,
                 "CTP_TD_USER_ID (or CTP_USER_ID)": self.td_user_id,

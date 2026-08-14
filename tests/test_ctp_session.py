@@ -75,12 +75,16 @@ def test_immediate_md_login_request_failure_is_logged(monkeypatch):
         pass
 
     class MdApi:
-        def ReqUserLogin(self, _request, _request_id):
+        def __init__(self):
+            self.login_request = None
+
+        def ReqUserLogin(self, request, _request_id):
+            self.login_request = request
             return -2
 
     publisher = StatusPublisher()
     publisher.settings = SimpleNamespace(
-        broker_id="shared-broker",
+        md_broker_id="md-broker",
         md_user_id="md-user",
         md_password="md-secret",
     )
@@ -107,6 +111,11 @@ def test_immediate_md_login_request_failure_is_logged(monkeypatch):
 
     assert publisher.messages[-1][2]["status"] == "MD_LOGIN_REQUEST_FAILED"
     assert publisher.messages[-1][2]["error"] == "return_code=-2"
+    assert vars(publisher.md_api.login_request) == {
+        "BrokerID": "md-broker",
+        "UserID": "md-user",
+        "Password": "md-secret",
+    }
     assert any(
         record["level"].name == "ERROR"
         and "MD_LOGIN_REQUEST_FAILED" in record["message"]
@@ -137,7 +146,7 @@ def test_td_authentication_and_login_use_td_credentials(monkeypatch):
 
     publisher = StatusPublisher()
     publisher.settings = SimpleNamespace(
-        broker_id="shared-broker",
+        td_broker_id="td-broker",
         td_user_id="td-user",
         td_password="td-secret",
         app_id="shared-app",
@@ -168,13 +177,13 @@ def test_td_authentication_and_login_use_td_credentials(monkeypatch):
     spi.OnRspAuthenticate(None, SimpleNamespace(ErrorID=0), 1, True)
 
     assert vars(publisher.td_api.auth_request) == {
-        "BrokerID": "shared-broker",
+        "BrokerID": "td-broker",
         "UserID": "td-user",
         "AppID": "shared-app",
         "AuthCode": "shared-auth",
     }
     assert vars(publisher.td_api.login_request) == {
-        "BrokerID": "shared-broker",
+        "BrokerID": "td-broker",
         "UserID": "td-user",
         "Password": "td-secret",
     }
@@ -202,7 +211,7 @@ class CancelTdApi:
 def cancel_session(record):
     session = CtpSession(
         SimpleNamespace(
-            broker_id="9999",
+            td_broker_id="9999",
             td_user_id="td-user",
             query_min_interval_seconds=0,
         ),

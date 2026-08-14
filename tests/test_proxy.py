@@ -162,7 +162,8 @@ class FakeSession:
 @pytest.fixture
 def proxy(tmp_path):
     settings = Settings(
-        broker_id="9999",
+        md_broker_id="9999",
+        td_broker_id="9999",
         md_user_id="md-test",
         md_password="md-secret",
         td_user_id="test",

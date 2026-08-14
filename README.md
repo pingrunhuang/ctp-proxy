@@ -83,7 +83,8 @@ sudo systemctl enable --now ctp-proxy.service
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
-| `CTP_BROKER_ID` | MD/TD 共用的经纪商代码 | 必填 |
+| `CTP_MD_BROKER_ID` | 行情经纪商代码；未设置时兼容回退到 `CTP_BROKER_ID` | 必填 |
+| `CTP_TD_BROKER_ID` | 交易经纪商代码；未设置时兼容回退到 `CTP_BROKER_ID` | 必填 |
 | `CTP_APP_ID` | 交易穿透式监管 AppID | 必填 |
 | `CTP_AUTH_CODE` | 交易认证码 | 必填 |
 | `CTP_MD_USER_ID` | 行情登录账号 | 必填 |
@@ -103,9 +104,10 @@ sudo systemctl enable --now ctp-proxy.service
 | `DATABASE_POOL_MAX_SIZE` | 最大数据库连接数 | `5` |
 | `DATABASE_CONNECT_TIMEOUT_SECONDS` | 数据库启动连接超时 | `10` |
 
-MD 与 TD 分别配置用户和密码，并共用 `CTP_BROKER_ID`、`CTP_APP_ID` 和
-`CTP_AUTH_CODE`。为兼容旧部署，MD/TD 用户和密码未设置时仍会回退到
-`CTP_USER_ID` 和 `CTP_PASSWORD`。订单、成交、账户和持仓消息中的
+MD 与 TD 分别配置 BrokerID、用户和密码；`CTP_APP_ID` 和 `CTP_AUTH_CODE`
+只用于 TD 认证。为兼容旧部署，任一专用 BrokerID 未设置时会回退到
+`CTP_BROKER_ID`，MD/TD 用户和密码未设置时仍会回退到 `CTP_USER_ID` 和
+`CTP_PASSWORD`。订单、成交、账户和持仓消息中的
 `account_id` 以及对应 topic 均使用 `CTP_TD_USER_ID`。
 
 Proxy 启动时会连接 PostgreSQL，并自动创建 `ctp_orders` 表和幂等键、CTP 订单 ID 相关索引。数据库不可用时服务启动失败，不会在缺少持久化保护的情况下接受订单。

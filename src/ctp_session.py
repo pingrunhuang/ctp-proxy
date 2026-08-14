@@ -111,7 +111,7 @@ class CtpMdSpi(mdapi.CThostFtdcMdSpi):
     def OnFrontConnected(self) -> None:
         logger.info("CTP MD connected; logging in")
         request = mdapi.CThostFtdcReqUserLoginField()
-        request.BrokerID = self.session.settings.broker_id
+        request.BrokerID = self.session.settings.md_broker_id
         request.UserID = self.session.settings.md_user_id
         request.Password = self.session.settings.md_password
         result = self.session.md_api.ReqUserLogin(
@@ -191,7 +191,7 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
     def OnFrontConnected(self) -> None:
         self.session.publish_status("TD_CONNECTED")
         request = tdapi.CThostFtdcReqAuthenticateField()
-        request.BrokerID = self.session.settings.broker_id
+        request.BrokerID = self.session.settings.td_broker_id
         request.UserID = self.session.settings.td_user_id
         request.AppID = self.session.settings.app_id
         request.AuthCode = self.session.settings.auth_code
@@ -215,7 +215,7 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
             self.session.publish_status("TD_AUTH_FAILED", error=error)
             return
         request = tdapi.CThostFtdcReqUserLoginField()
-        request.BrokerID = self.session.settings.broker_id
+        request.BrokerID = self.session.settings.td_broker_id
         request.UserID = self.session.settings.td_user_id
         request.Password = self.session.settings.td_password
         result = self.session.td_api.ReqUserLogin(
@@ -238,7 +238,7 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         self.order_ref = int(_text(getattr(login, "MaxOrderRef", "0")) or "0")
         logger.info(f"TD login success: front_id={self.front_id}, session_id={self.session_id}, order_ref={self.order_ref}")
         request = tdapi.CThostFtdcSettlementInfoConfirmField()
-        request.BrokerID = self.session.settings.broker_id
+        request.BrokerID = self.session.settings.td_broker_id
         request.InvestorID = self.session.settings.td_user_id
         result = self.session.td_api.ReqSettlementInfoConfirm(
             request,
@@ -512,7 +512,7 @@ class CtpSession:
     def query_account(self, max_age_seconds: float | None) -> Any:
         def send(request_id: int) -> int:
             request = tdapi.CThostFtdcQryTradingAccountField()
-            request.BrokerID = self.settings.broker_id
+            request.BrokerID = self.settings.td_broker_id
             request.InvestorID = self.settings.td_user_id
             return self.td_api.ReqQryTradingAccount(request, request_id)
 
@@ -521,7 +521,7 @@ class CtpSession:
     def query_positions(self, max_age_seconds: float | None) -> Any:
         def send(request_id: int) -> int:
             request = tdapi.CThostFtdcQryInvestorPositionField()
-            request.BrokerID = self.settings.broker_id
+            request.BrokerID = self.settings.td_broker_id
             request.InvestorID = self.settings.td_user_id
             return self.td_api.ReqQryInvestorPosition(request, request_id)
 
@@ -530,7 +530,7 @@ class CtpSession:
     def query_orders(self, max_age_seconds: float | None) -> Any:
         def send(request_id: int) -> int:
             request = tdapi.CThostFtdcQryOrderField()
-            request.BrokerID = self.settings.broker_id
+            request.BrokerID = self.settings.td_broker_id
             request.InvestorID = self.settings.td_user_id
             return self.td_api.ReqQryOrder(request, request_id)
 
@@ -558,7 +558,7 @@ class CtpSession:
             return {"duplicate": True, "order": self.order_registry.get(client_id, strategy_id, client_order_id)}
 
         order = tdapi.CThostFtdcInputOrderField()
-        order.BrokerID = self.settings.broker_id
+        order.BrokerID = self.settings.td_broker_id
         order.InvestorID = self.settings.td_user_id
         order.UserID = self.settings.td_user_id
         order.InstrumentID = str(request["symbol"])
@@ -626,7 +626,7 @@ class CtpSession:
                 "CTP cancel requires FrontID + SessionID + OrderRef from OnRtnOrder"
             )
         action = tdapi.CThostFtdcInputOrderActionField()
-        action.BrokerID = self.settings.broker_id
+        action.BrokerID = self.settings.td_broker_id
         action.InvestorID = self.settings.td_user_id
         action.UserID = self.settings.td_user_id
         action.InstrumentID = str(source.get("symbol", ""))
