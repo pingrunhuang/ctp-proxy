@@ -829,6 +829,20 @@ class CtpSession:
             self.publish(f"orders.{self.settings.td_user_id}.{payload['strategy_id']}", "order", payload)
 
     def publish_trade(self, payload: dict[str, Any]) -> None:
+        try:
+            inserted = self.order_registry.record_trade(payload)
+        except Exception:
+            logger.exception(
+                "Failed to persist CTP trade before publish event_id={}",
+                payload.get("event_id"),
+            )
+            return
+        logger.debug(
+            "Persisted CTP trade event_id={} strategy_id={} inserted={}",
+            payload.get("event_id"),
+            payload.get("strategy_id"),
+            inserted,
+        )
         self.publish(f"trades.{self.settings.td_user_id}", "trade", payload)
         if payload.get("strategy_id"):
             self.publish(f"trades.{self.settings.td_user_id}.{payload['strategy_id']}", "trade", payload)

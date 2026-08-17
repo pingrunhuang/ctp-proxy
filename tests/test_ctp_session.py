@@ -447,3 +447,31 @@ def test_trade_payload_has_stable_native_fill_identity():
     assert first["client_id"] == "engine-01"
     assert first["strategy_id"] == "arb-ctp"
     assert first["client_order_id"] == "arb-ctp-1"
+
+
+def test_trade_is_persisted_before_publish():
+    class TradeRegistry:
+        def __init__(self):
+            self.trades = []
+
+        def record_trade(self, payload):
+            self.trades.append(dict(payload))
+            return True
+
+    registry = TradeRegistry()
+    published = []
+    session = CtpSession(
+        SimpleNamespace(td_user_id="td-user", query_min_interval_seconds=0),
+        lambda topic, event, data: published.append((topic, event, data)),
+        registry,
+    )
+    payload = {
+        "event_id": "trade:ctp:persisted-1",
+        "client_id": "engine",
+        "strategy_id": "arb-ctp",
+    }
+
+    session.publish_trade(payload)
+
+    assert registry.trades == [payload]
+    assert published[0] == ("trades.td-user", "trade", payload)

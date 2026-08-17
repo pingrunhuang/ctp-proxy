@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections import defaultdict
@@ -117,6 +118,25 @@ class OrderRegistry:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ctp_orders_sys_id ON ctp_orders(exchange_id, order_sys_id, updated_at DESC)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ctp_trades (
+                    id BIGSERIAL PRIMARY KEY,
+                    event_id TEXT NOT NULL UNIQUE,
+                    client_id TEXT NOT NULL DEFAULT '',
+                    strategy_id TEXT NOT NULL DEFAULT '',
+                    account_id TEXT NOT NULL DEFAULT '',
+                    trading_day TEXT NOT NULL DEFAULT '',
+                    trade_id TEXT NOT NULL DEFAULT '',
+                    payload JSONB NOT NULL,
+                    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ctp_trades_owner_cursor "
+                "ON ctp_trades(client_id, strategy_id, id)"
             )
 
     def create(
@@ -253,6 +273,61 @@ class OrderRegistry:
                     "SELECT * FROM ctp_orders ORDER BY updated_at DESC"
                 ).fetchall()
             return rows
+
+    def record_trade(self, payload: dict[str, Any]) -> bool:
+        """Persist one immutable trade before it is published."""
+        event_id = str(payload.get("event_id") or "").strip()
+        if not event_id:
+            raise ValueError("trade payload requires event_id")
+        with self._pool.connection() as connection:
+            row = connection.execute(
+                """
+                INSERT INTO ctp_trades(
+                    event_id, client_id, strategy_id, account_id,
+                    trading_day, trade_id, payload
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (event_id) DO NOTHING
+                RETURNING id
+                """,
+                (
+                    event_id,
+                    str(payload.get("client_id") or ""),
+                    str(payload.get("strategy_id") or ""),
+                    str(payload.get("account_id") or ""),
+                    str(payload.get("trading_day") or ""),
+                    str(payload.get("trade_id") or ""),
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str),
+                ),
+            ).fetchone()
+            return row is not None
+
+    def list_trades(
+        self,
+        client_id: str,
+        strategy_id: str,
+        *,
+        after_id: int = 0,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        page_size = min(max(int(limit), 1), 1000)
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, payload
+                FROM ctp_trades
+                WHERE client_id=%s AND strategy_id=%s AND id>%s
+                ORDER BY id ASC
+                LIMIT %s
+                """,
+                (client_id, strategy_id, max(int(after_id), 0), page_size + 1),
+            ).fetchall()
+        has_more = len(rows) > page_size
+        page = rows[:page_size]
+        return {
+            "trades": [row["payload"] for row in page],
+            "next_after_id": int(page[-1]["id"]) if page else max(int(after_id), 0),
+            "has_more": has_more,
+        }
 
     def is_healthy(self) -> bool:
         try:

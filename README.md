@@ -174,7 +174,11 @@ errors.CTP
 {"action":"get_positions","force_refresh":true}
 {"action":"get_orders","max_age_ms":5000}
 {"action":"get_orders","local_only":true,"strategy_only":true,"strategy_id":"arb-au"}
+{"action":"get_trades","client_id":"engine-01","strategy_id":"arb-au","after_id":0,"limit":500}
 ```
+
+成交会在发送 PUB 事件前写入 PostgreSQL。`get_trades` 按 owner 隔离并使用
+`next_after_id`、`has_more` 分页，供 Engine 启动和重连时恢复漏收成交。
 
 下单：
 
