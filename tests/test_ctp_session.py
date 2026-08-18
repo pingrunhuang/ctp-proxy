@@ -474,4 +474,8 @@ def test_trade_is_persisted_before_publish():
     session.publish_trade(payload)
 
     assert registry.trades == [payload]
-    assert published[0] == ("trades.td-user", "trade", payload)
+    assert published[0] == (
+        "trades.td-user",
+        "trade",
+        {**payload, "trade_cursor": 1},
+    )

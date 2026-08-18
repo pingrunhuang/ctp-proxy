@@ -274,7 +274,7 @@ class OrderRegistry:
                 ).fetchall()
             return rows
 
-    def record_trade(self, payload: dict[str, Any]) -> bool:
+    def record_trade(self, payload: dict[str, Any]) -> int | None:
         """Persist one immutable trade before it is published."""
         event_id = str(payload.get("event_id") or "").strip()
         if not event_id:
@@ -299,7 +299,7 @@ class OrderRegistry:
                     json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str),
                 ),
             ).fetchone()
-            return row is not None
+            return int(row["id"]) if row is not None else None
 
     def list_trades(
         self,
@@ -323,11 +323,28 @@ class OrderRegistry:
             ).fetchall()
         has_more = len(rows) > page_size
         page = rows[:page_size]
+        trades = []
+        for row in page:
+            payload = dict(row["payload"])
+            payload["trade_cursor"] = int(row["id"])
+            trades.append(payload)
         return {
-            "trades": [row["payload"] for row in page],
+            "trades": trades,
             "next_after_id": int(page[-1]["id"]) if page else max(int(after_id), 0),
             "has_more": has_more,
         }
+
+    def latest_trade_cursor(self, client_id: str, strategy_id: str) -> int:
+        with self._pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(MAX(id), 0) AS cursor
+                FROM ctp_trades
+                WHERE client_id=%s AND strategy_id=%s
+                """,
+                (client_id, strategy_id),
+            ).fetchone()
+        return int(row["cursor"])
 
     def is_healthy(self) -> bool:
         try:

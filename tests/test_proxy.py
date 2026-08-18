@@ -124,6 +124,14 @@ class InMemoryOrderRegistry:
             "has_more": next_after_id < len(matching),
         }
 
+    def latest_trade_cursor(self, client_id, strategy_id):
+        return len([
+            item
+            for item in self.trades
+            if item.get("client_id") == client_id
+            and item.get("strategy_id") == strategy_id
+        ])
+
     def is_healthy(self):
         return True
 
@@ -262,6 +270,14 @@ def test_get_trades_is_owner_scoped_and_paginated(proxy):
     assert [item["event_id"] for item in response["data"]["trades"]] == [
         "trade:ctp:1"
     ]
+    cursor = instance.handle_command(
+        {
+            "action": "get_trade_cursor",
+            "client_id": "engine",
+            "strategy_id": "arb-a",
+        }
+    )
+    assert cursor["data"] == {"cursor": 1}
 
 
 def test_place_order_passes_strategy_identity(proxy):

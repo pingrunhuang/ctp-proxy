@@ -830,7 +830,7 @@ class CtpSession:
 
     def publish_trade(self, payload: dict[str, Any]) -> None:
         try:
-            inserted = self.order_registry.record_trade(payload)
+            trade_cursor = self.order_registry.record_trade(payload)
         except Exception:
             logger.exception(
                 "Failed to persist CTP trade before publish event_id={}",
@@ -838,14 +838,22 @@ class CtpSession:
             )
             return
         logger.debug(
-            "Persisted CTP trade event_id={} strategy_id={} inserted={}",
+            "Persisted CTP trade event_id={} strategy_id={} trade_cursor={}",
             payload.get("event_id"),
             payload.get("strategy_id"),
-            inserted,
+            trade_cursor,
         )
-        self.publish(f"trades.{self.settings.td_user_id}", "trade", payload)
-        if payload.get("strategy_id"):
-            self.publish(f"trades.{self.settings.td_user_id}.{payload['strategy_id']}", "trade", payload)
+        if not trade_cursor:
+            logger.debug("Skip duplicate CTP trade event_id={}", payload.get("event_id"))
+            return
+        published_payload = {**payload, "trade_cursor": int(trade_cursor)}
+        self.publish(f"trades.{self.settings.td_user_id}", "trade", published_payload)
+        if published_payload.get("strategy_id"):
+            self.publish(
+                f"trades.{self.settings.td_user_id}.{published_payload['strategy_id']}",
+                "trade",
+                published_payload,
+            )
 
     def close(self) -> None:
         self.md_ready.clear()
