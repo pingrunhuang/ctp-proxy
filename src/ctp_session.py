@@ -371,6 +371,7 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
                 key,
                 {
                     "gateway_name": "CTP",
+                    "account_id": self.session.settings.td_user_id,
                     "symbol": symbol,
                     "exchange": _text(getattr(data, "ExchangeID", "")),
                     "direction": direction,
