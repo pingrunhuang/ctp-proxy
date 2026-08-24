@@ -21,6 +21,7 @@ services:
     platform: linux/amd64
     restart: unless-stopped
     security_opt:
+      - apparmor=unconfined
       - systempaths=unconfined
     env_file: .env
     environment:
