@@ -31,7 +31,12 @@ ENV PYTHONUNBUFFERED=1 \
 RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=60 update \
-    && apt-get install -y --no-install-recommends ca-certificates curl libgomp1 \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        dmidecode \
+        libgomp1 \
+        lshw \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl --retry 5 --retry-all-errors --fail --location --silent --show-error \
