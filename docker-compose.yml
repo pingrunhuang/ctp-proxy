@@ -37,3 +37,9 @@ services:
     volumes:
       - ./flow:/app/flow
       - ./logs:/app/logs
+      - type: bind
+        source: /sys/firmware/dmi/tables
+        target: /sys/firmware/dmi/tables
+        read_only: true
+        bind:
+          create_host_path: false
