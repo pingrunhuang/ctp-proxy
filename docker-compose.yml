@@ -20,6 +20,8 @@ services:
     build: .
     platform: linux/amd64
     restart: unless-stopped
+    security_opt:
+      - systempaths=unconfined
     env_file: .env
     environment:
       LANG: C
