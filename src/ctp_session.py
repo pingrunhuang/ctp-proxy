@@ -33,6 +33,7 @@ except ImportError:
 
 Publisher = Callable[[str, str, dict[str, Any]], None]
 CANCELLABLE_ORDER_STATUSES = frozenset({"SUBMITTED", "PARTTRADED"})
+TERMINAL_ORDER_STATUSES = frozenset({"CANCELLED", "TRADED", "REJECTED"})
 
 
 def _text(value: Any) -> str:
@@ -422,19 +423,13 @@ class CtpTraderSpi(tdapi.CThostFtdcTraderSpi):
         self.OnRspOrderInsert(order, info, 0, True)
 
     def OnRspOrderAction(self, action: Any, info: Any, _request_id: int, _last: bool) -> None:
-        error = _error(info)
-        if error:
-            self.session.publish(
-                "errors.CTP",
-                "cancel_error",
-                {
-                    "message": error,
-                    "order_ref": _text(getattr(action, "OrderRef", "")),
-                    "front_id": int(getattr(action, "FrontID", 0) or 0),
-                    "session_id": int(getattr(action, "SessionID", 0) or 0),
-                    "exchange": _text(getattr(action, "ExchangeID", "")),
-                    "symbol": _text(getattr(action, "InstrumentID", "")),
-                },
+        error_details = _error_details(info)
+        if error_details:
+            self.session.publish_cancel_error(
+                action,
+                status_message=str(error_details["error"]),
+                error_id=int(error_details["error_id"]),
+                error_message=str(error_details["error_message"]),
             )
 
     def OnErrRtnOrderAction(self, action: Any, info: Any) -> None:
@@ -466,6 +461,8 @@ class CtpSession:
         self._query_lock = threading.Lock()
         self._last_query_at = 0.0
         self._pending_queries: dict[str, tuple[threading.Event, dict[str, Any]]] = {}
+        self._cancel_lock = threading.Lock()
+        self._pending_cancels: set[tuple[int, int, str]] = set()
         self._active_symbols_provider: Callable[[], list[str]] = lambda: []
 
     def set_active_symbols_provider(self, provider: Callable[[], list[str]]) -> None:
@@ -478,6 +475,10 @@ class CtpSession:
     def md_enabled(self) -> bool:
         return self.settings.enable_md
 
+    @property
+    def td_enabled(self) -> bool:
+        return bool(getattr(self.settings, "enable_td", True))
+
     def next_request_id(self) -> int:
         with self._request_lock:
             self._request_id += 1
@@ -486,14 +487,15 @@ class CtpSession:
     def connect(self, timeout: float = 20.0) -> bool:
         if not CTP_AVAILABLE:
             raise RuntimeError("openctp-ctp is not installed on this platform")
-        td_flow = Path(self.settings.flow_path) / "td"
-        td_flow.mkdir(parents=True, exist_ok=True)
-        self.td_api = tdapi.CThostFtdcTraderApi.CreateFtdcTraderApi(str(td_flow.absolute()) + "/", self.settings.production_mode)
-        self.td_spi = CtpTraderSpi(self)
-        self.td_api.RegisterSpi(self.td_spi)
-        self.td_api.RegisterFront(self.settings.front_td)
-        self.td_api.SubscribePrivateTopic(tdapi.THOST_TERT_QUICK)
-        self.td_api.SubscribePublicTopic(tdapi.THOST_TERT_QUICK)
+        if self.td_enabled:
+            td_flow = Path(self.settings.flow_path) / "td"
+            td_flow.mkdir(parents=True, exist_ok=True)
+            self.td_api = tdapi.CThostFtdcTraderApi.CreateFtdcTraderApi(str(td_flow.absolute()) + "/", self.settings.production_mode)
+            self.td_spi = CtpTraderSpi(self)
+            self.td_api.RegisterSpi(self.td_spi)
+            self.td_api.RegisterFront(self.settings.front_td)
+            self.td_api.SubscribePrivateTopic(tdapi.THOST_TERT_QUICK)
+            self.td_api.SubscribePublicTopic(tdapi.THOST_TERT_QUICK)
         if self.md_enabled:
             md_flow = Path(self.settings.flow_path) / "md"
             md_flow.mkdir(parents=True, exist_ok=True)
@@ -502,14 +504,16 @@ class CtpSession:
             self.md_api.RegisterSpi(self.md_spi)
             self.md_api.RegisterFront(self.settings.front_md)
             self.md_api.Init()
-        self.td_api.Init()
+        if self.td_enabled:
+            self.td_api.Init()
         md_ok = not self.md_enabled or self.md_ready.wait(timeout)
-        td_ok = self.td_ready.wait(timeout)
+        td_ok = not self.td_enabled or self.td_ready.wait(timeout)
         if not (md_ok and td_ok):
             logger.error(
                 "CTP session is not ready after login wait: "
-                "md_enabled={} md_ready={} td_ready={} timeout_seconds={}",
+                "md_enabled={} td_enabled={} md_ready={} td_ready={} timeout_seconds={}",
                 self.md_enabled,
+                self.td_enabled,
                 self.md_ready.is_set(),
                 self.td_ready.is_set(),
                 timeout,
@@ -517,7 +521,10 @@ class CtpSession:
         return md_ok and td_ok
 
     def is_ready(self) -> bool:
-        return (not self.md_enabled or self.md_ready.is_set()) and self.td_ready.is_set()
+        return (
+            (not self.md_enabled or self.md_ready.is_set())
+            and (not self.td_enabled or self.td_ready.is_set())
+        )
 
     def publish_status(self, status: str, **details: Any) -> None:
         if status.endswith("_FAILED"):
@@ -561,6 +568,8 @@ class CtpSession:
             event.set()
 
     def _query(self, kind: str, send: Callable[[int], int], max_age_seconds: float | None) -> Any:
+        if not self.td_enabled:
+            raise RuntimeError("CTP trading is disabled by CTP_ENABLE_TD=false")
         if max_age_seconds is not None:
             cached = self.cache.get(kind, max_age_seconds)
             if cached is not None:
@@ -616,6 +625,8 @@ class CtpSession:
         return self._query("orders", send, max_age_seconds)
 
     def place_order(self, request: dict[str, Any], client_id: str, strategy_id: str, client_order_id: str) -> dict[str, Any]:
+        if not self.td_enabled:
+            raise RuntimeError("CTP trading is disabled by CTP_ENABLE_TD=false")
         if not self.td_ready.is_set():
             raise RuntimeError("CTP trader session is not ready")
         assert self.td_spi is not None
@@ -684,6 +695,8 @@ class CtpSession:
         }
 
     def cancel_order(self, request: dict[str, Any], client_id: str, strategy_id: str) -> dict[str, Any]:
+        if not self.td_enabled:
+            raise RuntimeError("CTP trading is disabled by CTP_ENABLE_TD=false")
         record = None
         if request.get("client_order_id"):
             record = self.order_registry.get(client_id, strategy_id, str(request["client_order_id"]))
@@ -692,7 +705,40 @@ class CtpSession:
         source = record or request
         if record is not None:
             status = str(record.get("status", "")).upper()
+            if status in TERMINAL_ORDER_STATUSES:
+                logger.info(
+                    "CTP idempotent cancel skipped for terminal order: "
+                    "client_id={} strategy_id={} client_order_id={} status={} "
+                    "order_ref={} front_id={} session_id={}",
+                    client_id,
+                    strategy_id,
+                    request["client_order_id"],
+                    status,
+                    record.get("order_ref", ""),
+                    record.get("front_id", 0),
+                    record.get("session_id", 0),
+                )
+                return {
+                    "accepted": True,
+                    "submitted": False,
+                    "duplicate": True,
+                    "already_terminal": True,
+                    "operation": "CANCEL_ORDER",
+                    "client_order_id": request["client_order_id"],
+                    "status": status,
+                    "order_ref": str(record.get("order_ref", "") or ""),
+                    "front_id": int(record.get("front_id", 0) or 0),
+                    "session_id": int(record.get("session_id", 0) or 0),
+                }
             if status not in CANCELLABLE_ORDER_STATUSES:
+                logger.warning(
+                    "CTP cancel rejected for non-active order: client_id={} "
+                    "strategy_id={} client_order_id={} status={}",
+                    client_id,
+                    strategy_id,
+                    request["client_order_id"],
+                    status or "UNKNOWN",
+                )
                 raise RuntimeError(
                     "CTP order is not cancellable before an active OnRtnOrder: "
                     f"client_order_id={request['client_order_id']} status={status or 'UNKNOWN'}"
@@ -704,6 +750,45 @@ class CtpSession:
             raise RuntimeError(
                 "CTP cancel requires FrontID + SessionID + OrderRef from OnRtnOrder"
             )
+        cancel_key = (front_id, session_id, order_ref)
+        with self._cancel_lock:
+            if cancel_key in self._pending_cancels:
+                logger.info(
+                    "CTP idempotent cancel skipped while request is pending: "
+                    "client_id={} strategy_id={} client_order_id={} order_ref={} "
+                    "front_id={} session_id={} status={}",
+                    client_id,
+                    strategy_id,
+                    request.get("client_order_id", ""),
+                    order_ref,
+                    front_id,
+                    session_id,
+                    str(source.get("status", "") or "UNKNOWN"),
+                )
+                return {
+                    "accepted": True,
+                    "submitted": False,
+                    "duplicate": True,
+                    "cancel_pending": True,
+                    "operation": "CANCEL_ORDER",
+                    "client_order_id": request.get("client_order_id"),
+                    "status": str(source.get("status", "") or ""),
+                    "order_ref": order_ref,
+                    "front_id": front_id,
+                    "session_id": session_id,
+                }
+            self._pending_cancels.add(cancel_key)
+        logger.info(
+            "CTP cancel submitting to broker: client_id={} strategy_id={} "
+            "client_order_id={} order_ref={} front_id={} session_id={} status={}",
+            client_id,
+            strategy_id,
+            request.get("client_order_id", ""),
+            order_ref,
+            front_id,
+            session_id,
+            str(source.get("status", "") or "UNKNOWN"),
+        )
         action = tdapi.CThostFtdcInputOrderActionField()
         action.BrokerID = self.settings.td_broker_id
         action.InvestorID = self.settings.td_user_id
@@ -718,9 +803,39 @@ class CtpSession:
         action.OrderActionRef = request_id
         result = self.td_api.ReqOrderAction(action, request_id)
         if result:
+            with self._cancel_lock:
+                self._pending_cancels.discard(cancel_key)
+            logger.error(
+                "CTP cancel API rejected immediately: client_id={} strategy_id={} "
+                "client_order_id={} order_ref={} front_id={} session_id={} "
+                "request_id={} return_code={}",
+                client_id,
+                strategy_id,
+                request.get("client_order_id", ""),
+                order_ref,
+                front_id,
+                session_id,
+                request_id,
+                result,
+            )
             raise RuntimeError(f"CTP ReqOrderAction returned {result}")
+        logger.info(
+            "CTP cancel accepted by API: client_id={} strategy_id={} "
+            "client_order_id={} order_ref={} front_id={} session_id={} request_id={}",
+            client_id,
+            strategy_id,
+            request.get("client_order_id", ""),
+            order_ref,
+            front_id,
+            session_id,
+            request_id,
+        )
         return {
             "accepted": True,
+            "submitted": True,
+            "awaiting_order_report": True,
+            "duplicate": False,
+            "operation": "CANCEL_ORDER",
             "client_order_id": request.get("client_order_id"),
             "order_ref": action.OrderRef,
             "front_id": action.FrontID,
@@ -749,6 +864,23 @@ class CtpSession:
             session_id=session_id,
         ) or {}
         actual_status = status or _status_from_ctp(getattr(data, "OrderStatus", ""))
+        if actual_status in TERMINAL_ORDER_STATUSES:
+            cancel_key = (front_id, session_id, order_ref)
+            with self._cancel_lock:
+                was_pending_cancel = cancel_key in self._pending_cancels
+                self._pending_cancels.discard(cancel_key)
+            if was_pending_cancel:
+                logger.info(
+                    "CTP cancel completed by order report: client_id={} strategy_id={} "
+                    "client_order_id={} order_ref={} front_id={} session_id={} status={}",
+                    owner.get("client_id", ""),
+                    owner.get("strategy_id", ""),
+                    owner.get("client_order_id", ""),
+                    order_ref,
+                    front_id,
+                    session_id,
+                    actual_status,
+                )
         self.order_registry.update_ctp(
             order_ref=order_ref,
             front_id=front_id,
@@ -866,9 +998,64 @@ class CtpSession:
                 published_payload,
             )
 
+    def publish_cancel_error(
+        self,
+        data: Any,
+        *,
+        status_message: str,
+        error_id: int | None,
+        error_message: str,
+    ) -> None:
+        order_ref = _text(getattr(data, "OrderRef", ""))
+        exchange_id = _text(getattr(data, "ExchangeID", ""))
+        order_sys_id = getattr(data, "OrderSysID", "")
+        front_id = int(getattr(data, "FrontID", 0) or 0)
+        session_id = int(getattr(data, "SessionID", 0) or 0)
+        with self._cancel_lock:
+            self._pending_cancels.discard((front_id, session_id, order_ref))
+        owner = self.order_registry.find_by_ctp(
+            order_ref=order_ref,
+            exchange_id=exchange_id,
+            order_sys_id=order_sys_id,
+            front_id=front_id,
+            session_id=session_id,
+        ) or {}
+        logger.warning(
+            "CTP cancel rejected by broker: client_id={} strategy_id={} "
+            "client_order_id={} order_ref={} front_id={} session_id={} "
+            "error_id={} error_message={}",
+            owner.get("client_id", ""),
+            owner.get("strategy_id", ""),
+            owner.get("client_order_id", ""),
+            order_ref,
+            front_id,
+            session_id,
+            error_id,
+            error_message,
+        )
+        self.publish(
+            "errors.CTP",
+            "cancel_error",
+            {
+                "message": status_message,
+                "error_id": error_id,
+                "error_message": error_message,
+                "client_id": owner.get("client_id"),
+                "strategy_id": owner.get("strategy_id"),
+                "client_order_id": owner.get("client_order_id"),
+                "order_ref": order_ref,
+                "front_id": front_id,
+                "session_id": session_id,
+                "exchange": exchange_id,
+                "symbol": _text(getattr(data, "InstrumentID", "")),
+            },
+        )
+
     def close(self) -> None:
         self.md_ready.clear()
         self.td_ready.clear()
+        with self._cancel_lock:
+            self._pending_cancels.clear()
         for api in (self.md_api, self.td_api):
             if api is not None:
                 try:

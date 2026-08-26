@@ -14,6 +14,11 @@ def test_market_data_is_enabled_by_default(monkeypatch):
     assert Settings.from_env().enable_md is True
 
 
+def test_trading_is_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("CTP_ENABLE_TD", raising=False)
+    assert Settings.from_env().enable_td is True
+
+
 def test_td_only_mode_does_not_require_md_configuration():
     settings = Settings(
         md_broker_id="", td_broker_id="td", md_user_id="", md_password="",
@@ -31,6 +36,26 @@ def test_td_only_mode_rejects_startup_symbols():
         initial_symbols=["ag2612"],
     )
     with pytest.raises(ValueError, match="CTP_SYMBOLS must be empty"):
+        settings.validate()
+
+
+def test_md_only_mode_does_not_require_td_configuration():
+    settings = Settings(
+        md_broker_id="md", td_broker_id="", md_user_id="md-user",
+        md_password="md-password", td_user_id="", td_password="",
+        app_id="", auth_code="", front_md="tcp://md", front_td="",
+        enable_td=False,
+    )
+    settings.validate()
+
+
+def test_both_sessions_cannot_be_disabled():
+    settings = Settings(
+        md_broker_id="", td_broker_id="", md_user_id="", md_password="",
+        td_user_id="", td_password="", app_id="", auth_code="",
+        front_md="", front_td="", enable_md=False, enable_td=False,
+    )
+    with pytest.raises(ValueError, match="At least one"):
         settings.validate()
 
 

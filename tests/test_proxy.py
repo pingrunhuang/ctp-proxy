@@ -239,6 +239,17 @@ def test_subscriptions_are_reference_counted_across_strategies(proxy):
     assert session.unsubscribed == [[], ["au2608"]]
 
 
+def test_td_disabled_rejects_broker_queries(proxy):
+    instance, session = proxy
+    instance.settings.enable_td = False
+
+    response = instance.handle_command({"action": "get_account"})
+
+    assert response["status"] == "error"
+    assert "CTP_ENABLE_TD=false" in response["error"]["message"]
+    assert session.query_calls == []
+
+
 def test_get_trades_is_owner_scoped_and_paginated(proxy):
     instance, _session = proxy
     instance.order_registry.record_trade(

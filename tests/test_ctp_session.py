@@ -64,6 +64,46 @@ def test_td_only_connect_does_not_create_md_api(monkeypatch, tmp_path):
         session.subscribe_market_data(["ag2612"])
 
 
+def test_md_only_connect_does_not_create_td_api(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeApi:
+        def RegisterSpi(self, _spi): pass
+        def RegisterFront(self, _front): pass
+        def Init(self): pass
+
+    class MdFactory:
+        @staticmethod
+        def CreateFtdcMdApi(*args):
+            calls.append(("md", args))
+            return FakeApi()
+
+    class TdFactory:
+        @staticmethod
+        def CreateFtdcTraderApi(*args):
+            calls.append(("td", args))
+            return FakeApi()
+
+    monkeypatch.setattr(ctp_session, "CTP_AVAILABLE", True)
+    monkeypatch.setattr(ctp_session.mdapi, "CThostFtdcMdApi", MdFactory, raising=False)
+    monkeypatch.setattr(ctp_session.tdapi, "CThostFtdcTraderApi", TdFactory, raising=False)
+    settings = Settings(
+        md_broker_id="md", td_broker_id="", md_user_id="md-user",
+        md_password="md-password", td_user_id="", td_password="",
+        app_id="", auth_code="", front_md="tcp://md", front_td="",
+        enable_td=False, flow_path=tmp_path,
+    )
+    session = CtpSession(settings, lambda *_args: None, SimpleNamespace())
+    session.md_ready.set()
+
+    assert session.connect(0.01)
+    assert session.td_api is None
+    assert [kind for kind, _args in calls] == ["md"]
+    assert session.is_ready()
+    with pytest.raises(RuntimeError, match="CTP_ENABLE_TD=false"):
+        session.query_account(None)
+
+
 def test_failed_session_status_is_logged_and_published():
     records = []
     sink_id = logger.add(lambda message: records.append(message.record))
@@ -298,6 +338,12 @@ class CancelRegistry:
             return self.record
         return None
 
+    def find_by_ctp(self, **_kwargs):
+        return self.record
+
+    def update_ctp(self, **kwargs):
+        self.record.update(kwargs)
+
 
 class CancelTdApi:
     def __init__(self):
@@ -309,6 +355,9 @@ class CancelTdApi:
 
 
 def cancel_session(record):
+    record.setdefault("client_id", "engine")
+    record.setdefault("strategy_id", "strategy")
+    record.setdefault("client_order_id", "order-1")
     session = CtpSession(
         SimpleNamespace(
             td_broker_id="9999",
@@ -388,11 +437,180 @@ def test_cancel_uses_only_front_session_and_order_ref(monkeypatch):
     assert action.OrderActionRef == request_id
     assert result == {
         "accepted": True,
+        "submitted": True,
+        "awaiting_order_report": True,
+        "duplicate": False,
+        "operation": "CANCEL_ORDER",
         "client_order_id": "order-1",
         "order_ref": "2",
         "front_id": 7,
         "session_id": 11,
     }
+
+
+@pytest.mark.parametrize("terminal_status", ["CANCELLED", "TRADED", "REJECTED"])
+def test_cancel_is_idempotent_for_terminal_order(terminal_status):
+    session = cancel_session(
+        {
+            "status": terminal_status,
+            "symbol": "ag2609",
+            "exchange_id": "SHFE",
+            "order_ref": "2",
+            "front_id": 7,
+            "session_id": 11,
+        }
+    )
+    records = []
+    sink_id = logger.add(lambda message: records.append(message.record))
+    try:
+        result = session.cancel_order(
+            {"client_order_id": "order-1"}, "engine", "strategy"
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert result["accepted"] is True
+    assert result["duplicate"] is True
+    assert result["already_terminal"] is True
+    assert result["submitted"] is False
+    assert result["status"] == terminal_status
+    assert session.td_api.calls == []
+    assert any(
+        "idempotent cancel skipped for terminal order" in record["message"]
+        and terminal_status in record["message"]
+        and "order-1" in record["message"]
+        for record in records
+    )
+
+
+def test_repeated_cancel_while_pending_is_not_sent_twice(monkeypatch):
+    class OrderAction:
+        pass
+
+    monkeypatch.setattr(
+        ctp_session.tdapi,
+        "CThostFtdcInputOrderActionField",
+        OrderAction,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ctp_session.tdapi, "THOST_FTDC_AF_Delete", "0", raising=False
+    )
+    session = cancel_session(
+        {
+            "status": "SUBMITTED",
+            "symbol": "ag2609",
+            "exchange_id": "SHFE",
+            "order_ref": "2",
+            "front_id": 7,
+            "session_id": 11,
+        }
+    )
+
+    first = session.cancel_order(
+        {"client_order_id": "order-1"}, "engine", "strategy"
+    )
+    repeated = session.cancel_order(
+        {"client_order_id": "order-1"}, "engine", "strategy"
+    )
+
+    assert first["submitted"] is True
+    assert repeated["accepted"] is True
+    assert repeated["duplicate"] is True
+    assert repeated["cancel_pending"] is True
+    assert repeated["submitted"] is False
+    assert len(session.td_api.calls) == 1
+
+
+def test_cancel_error_releases_pending_request_for_retry(monkeypatch):
+    class OrderAction:
+        pass
+
+    monkeypatch.setattr(
+        ctp_session.tdapi,
+        "CThostFtdcInputOrderActionField",
+        OrderAction,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ctp_session.tdapi, "THOST_FTDC_AF_Delete", "0", raising=False
+    )
+    session = cancel_session(
+        {
+            "status": "SUBMITTED",
+            "symbol": "ag2609",
+            "exchange_id": "SHFE",
+            "order_ref": "2",
+            "front_id": 7,
+            "session_id": 11,
+        }
+    )
+    published = []
+    session.publish = lambda topic, event, data: published.append((topic, event, data))
+    request = {"client_order_id": "order-1"}
+    session.cancel_order(request, "engine", "strategy")
+
+    session.publish_cancel_error(
+        SimpleNamespace(
+            OrderRef="2",
+            FrontID=7,
+            SessionID=11,
+            ExchangeID="SHFE",
+            InstrumentID="ag2609",
+        ),
+        status_message="32: cancel rejected",
+        error_id=32,
+        error_message="cancel rejected",
+    )
+    retried = session.cancel_order(request, "engine", "strategy")
+
+    assert retried["submitted"] is True
+    assert len(session.td_api.calls) == 2
+    assert published[-1][0:2] == ("errors.CTP", "cancel_error")
+    assert published[-1][2]["client_order_id"] == "order-1"
+
+
+def test_terminal_order_report_clears_pending_cancel(monkeypatch):
+    class OrderAction:
+        pass
+
+    monkeypatch.setattr(
+        ctp_session.tdapi,
+        "CThostFtdcInputOrderActionField",
+        OrderAction,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ctp_session.tdapi, "THOST_FTDC_AF_Delete", "0", raising=False
+    )
+    session = cancel_session(
+        {
+            "status": "SUBMITTED",
+            "symbol": "ag2609",
+            "exchange_id": "SHFE",
+            "order_ref": "2",
+            "front_id": 7,
+            "session_id": 11,
+        }
+    )
+    session.cancel_order(
+        {"client_order_id": "order-1"}, "engine", "strategy"
+    )
+    assert session._pending_cancels == {(7, 11, "2")}
+
+    session.order_payload(
+        SimpleNamespace(
+            OrderRef="2",
+            FrontID=7,
+            SessionID=11,
+            ExchangeID="SHFE",
+            OrderSysID="131",
+            OrderStatus="5",
+            InstrumentID="ag2609",
+        )
+    )
+
+    assert session._pending_cancels == set()
 
 
 def test_order_return_preserves_fixed_width_order_sys_id():

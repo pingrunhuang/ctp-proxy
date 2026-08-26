@@ -143,6 +143,7 @@ class CtpProxy:
                         "database_ready": self.order_registry.is_healthy(),
                         "active_symbols": self.subscriptions.active_symbols(),
                         "md_enabled": self.settings.enable_md,
+                        "td_enabled": self.settings.enable_td,
                     },
                     request_id,
                 )
@@ -167,8 +168,12 @@ class CtpProxy:
                     request_id,
                 )
             if action == "get_account":
+                if not self.settings.enable_td:
+                    raise RuntimeError("CTP trading is disabled by CTP_ENABLE_TD=false")
                 return response_ok(self.session.query_account(self._query_max_age(request)), request_id)
             if action == "get_positions":
+                if not self.settings.enable_td:
+                    raise RuntimeError("CTP trading is disabled by CTP_ENABLE_TD=false")
                 return response_ok(self.session.query_positions(self._query_max_age(request)), request_id)
             if action == "get_orders":
                 if request.get("local_only"):
@@ -176,6 +181,8 @@ class CtpProxy:
                     if client_id:
                         data = [row for row in data if str(row.get("client_id") or "") == client_id]
                 else:
+                    if not self.settings.enable_td:
+                        raise RuntimeError("CTP trading is disabled by CTP_ENABLE_TD=false")
                     data = self.session.query_orders(self._query_max_age(request))
                 return response_ok(data, request_id)
             if action == "get_trades":
@@ -201,6 +208,8 @@ class CtpProxy:
                     request_id,
                 )
             if action == "place_order":
+                if not self.settings.enable_td:
+                    raise RuntimeError("CTP trading is disabled by CTP_ENABLE_TD=false")
                 require_fields(
                     request,
                     "client_id",
@@ -221,6 +230,8 @@ class CtpProxy:
                 data = self.session.place_order(request, client_id, strategy_id, client_order_id)
                 return response_ok(data, request_id)
             if action == "cancel_order":
+                if not self.settings.enable_td:
+                    raise RuntimeError("CTP trading is disabled by CTP_ENABLE_TD=false")
                 require_fields(request, "client_id", "strategy_id")
                 if not client_order_id and not request.get("order_ref") and not request.get("order_sys_id"):
                     raise ValueError("cancel_order requires client_order_id or CTP order identifiers")
@@ -231,6 +242,8 @@ class CtpProxy:
                         "ready": self.session.is_ready(),
                         "database_ready": self.order_registry.is_healthy(),
                         "active_symbols": self.subscriptions.active_symbols(),
+                        "md_enabled": self.settings.enable_md,
+                        "td_enabled": self.settings.enable_td,
                         "published_queue_size": self._publish_queue.qsize(),
                     },
                     request_id,

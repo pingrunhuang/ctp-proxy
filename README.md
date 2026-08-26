@@ -94,6 +94,7 @@ sudo systemctl enable --now ctp-proxy.service
 | `CTP_FRONT_MD` | 行情前置地址 | 必填 |
 | `CTP_FRONT_TD` | 交易前置地址 | 必填 |
 | `CTP_ENABLE_MD` | 是否创建、登录行情 API 并接受行情订阅；关闭时 `CTP_SYMBOLS` 必须为空 | `true` |
+| `CTP_ENABLE_TD` | 是否创建、登录交易 API 并接受交易查询、下单和撤单 | `true` |
 | `CTP_B_IS_PRODUCTION_MODE` | 传给 CTP MD/TD API 的生产模式标志；兼容旧变量 `CTP_PRODUCTION_MODE` | `true` |
 | `CTP_SYMBOLS` | 启动时订阅的合约，逗号分隔 | 空 |
 | `ZMQ_PUB_PORT` | 事件发布端口 | `5565` |
