@@ -142,10 +142,13 @@ class CtpProxy:
                         "ready": self.session.is_ready(),
                         "database_ready": self.order_registry.is_healthy(),
                         "active_symbols": self.subscriptions.active_symbols(),
+                        "md_enabled": self.settings.enable_md,
                     },
                     request_id,
                 )
             if action == "subscribe_market_data":
+                if not self.settings.enable_md:
+                    raise RuntimeError("CTP market data is disabled by CTP_ENABLE_MD=false")
                 symbols = normalize_symbols(request.get("symbols"))
                 newly_active = self.subscriptions.subscribe(client_id, strategy_id, symbols)
                 self.session.subscribe_market_data(newly_active)
@@ -154,6 +157,8 @@ class CtpProxy:
                     request_id,
                 )
             if action == "unsubscribe_market_data":
+                if not self.settings.enable_md:
+                    raise RuntimeError("CTP market data is disabled by CTP_ENABLE_MD=false")
                 symbols = normalize_symbols(request.get("symbols"))
                 newly_inactive = self.subscriptions.unsubscribe(client_id, strategy_id, symbols)
                 self.session.unsubscribe_market_data(newly_inactive)

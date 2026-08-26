@@ -4,7 +4,34 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import pytest
+
 from config import Settings
+
+
+def test_market_data_is_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("CTP_ENABLE_MD", raising=False)
+    assert Settings.from_env().enable_md is True
+
+
+def test_td_only_mode_does_not_require_md_configuration():
+    settings = Settings(
+        md_broker_id="", td_broker_id="td", md_user_id="", md_password="",
+        td_user_id="td-user", td_password="td-password", app_id="app",
+        auth_code="auth", front_md="", front_td="tcp://td", enable_md=False,
+    )
+    settings.validate()
+
+
+def test_td_only_mode_rejects_startup_symbols():
+    settings = Settings(
+        md_broker_id="", td_broker_id="td", md_user_id="", md_password="",
+        td_user_id="td-user", td_password="td-password", app_id="app",
+        auth_code="auth", front_md="", front_td="tcp://td", enable_md=False,
+        initial_symbols=["ag2612"],
+    )
+    with pytest.raises(ValueError, match="CTP_SYMBOLS must be empty"):
+        settings.validate()
 
 
 def test_engine_compatible_production_mode_defaults_to_true(monkeypatch):

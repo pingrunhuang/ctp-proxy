@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import ctp_session
 from ctp_session import CtpMdSpi, CtpSession, CtpTraderSpi
+from config import Settings
 
 
 class StatusPublisher:
@@ -18,6 +19,49 @@ class StatusPublisher:
 
     def publish(self, topic, event, data):
         self.messages.append((topic, event, data))
+
+
+def test_td_only_connect_does_not_create_md_api(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeApi:
+        def RegisterSpi(self, _spi): pass
+        def RegisterFront(self, _front): pass
+        def SubscribePrivateTopic(self, _mode): pass
+        def SubscribePublicTopic(self, _mode): pass
+        def Init(self): pass
+
+    class MdFactory:
+        @staticmethod
+        def CreateFtdcMdApi(*args):
+            calls.append(("md", args))
+            return FakeApi()
+
+    class TdFactory:
+        @staticmethod
+        def CreateFtdcTraderApi(*args):
+            calls.append(("td", args))
+            return FakeApi()
+
+    monkeypatch.setattr(ctp_session, "CTP_AVAILABLE", True)
+    monkeypatch.setattr(ctp_session.mdapi, "CThostFtdcMdApi", MdFactory, raising=False)
+    monkeypatch.setattr(ctp_session.tdapi, "CThostFtdcTraderApi", TdFactory, raising=False)
+    monkeypatch.setattr(ctp_session.tdapi, "THOST_TERT_QUICK", 0, raising=False)
+    settings = Settings(
+        md_broker_id="", td_broker_id="td", md_user_id="", md_password="",
+        td_user_id="td-user", td_password="td-password", app_id="app",
+        auth_code="auth", front_md="", front_td="tcp://td", enable_md=False,
+        flow_path=tmp_path,
+    )
+    session = CtpSession(settings, lambda *_args: None, SimpleNamespace())
+    session.td_ready.set()
+
+    assert session.connect(0.01)
+    assert session.md_api is None
+    assert [kind for kind, _args in calls] == ["td"]
+    assert session.is_ready()
+    with pytest.raises(RuntimeError, match="CTP_ENABLE_MD=false"):
+        session.subscribe_market_data(["ag2612"])
 
 
 def test_failed_session_status_is_logged_and_published():

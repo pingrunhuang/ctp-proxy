@@ -51,6 +51,7 @@ class Settings:
     auth_code: str
     front_md: str
     front_td: str
+    enable_md: bool = True
     production_mode: bool = True
     initial_symbols: list[str] = field(default_factory=list)
     zmq_bind_host: str = "0.0.0.0"
@@ -82,6 +83,7 @@ class Settings:
             auth_code=os.getenv("CTP_AUTH_CODE", "0000000000000000"),
             front_md=normalize_front(os.getenv("CTP_FRONT_MD", "")),
             front_td=normalize_front(os.getenv("CTP_FRONT_TD", "")),
+            enable_md=_bool_env("CTP_ENABLE_MD", True),
             production_mode=_bool_env(
                 "CTP_B_IS_PRODUCTION_MODE",
                 _bool_env("CTP_PRODUCTION_MODE", True),
@@ -109,15 +111,11 @@ class Settings:
         missing = [
             name
             for name, value in {
-                "CTP_MD_BROKER_ID (or CTP_BROKER_ID)": self.md_broker_id,
                 "CTP_TD_BROKER_ID (or CTP_BROKER_ID)": self.td_broker_id,
-                "CTP_MD_USER_ID (or CTP_USER_ID)": self.md_user_id,
-                "CTP_MD_PASSWORD (or CTP_PASSWORD)": self.md_password,
                 "CTP_TD_USER_ID (or CTP_USER_ID)": self.td_user_id,
                 "CTP_TD_PASSWORD (or CTP_PASSWORD)": self.td_password,
                 "CTP_APP_ID": self.app_id,
                 "CTP_AUTH_CODE": self.auth_code,
-                "CTP_FRONT_MD": self.front_md,
                 "CTP_FRONT_TD": self.front_td,
                 "DATABASE_URL": self.database_url,
             }.items()
@@ -125,6 +123,24 @@ class Settings:
         ]
         if missing:
             raise ValueError(f"Missing required configuration: {', '.join(missing)}")
+        if not self.enable_md:
+            if self.initial_symbols:
+                raise ValueError("CTP_SYMBOLS must be empty when CTP_ENABLE_MD=false")
+        else:
+            missing_md = [
+                name
+                for name, value in {
+                    "CTP_MD_BROKER_ID (or CTP_BROKER_ID)": self.md_broker_id,
+                    "CTP_MD_USER_ID (or CTP_USER_ID)": self.md_user_id,
+                    "CTP_MD_PASSWORD (or CTP_PASSWORD)": self.md_password,
+                    "CTP_FRONT_MD": self.front_md,
+                }.items()
+                if not value
+            ]
+            if missing_md:
+                raise ValueError(
+                    f"Missing required configuration: {', '.join(missing_md)}"
+                )
         if not self.database_url.startswith(("postgresql://", "postgres://")):
             raise ValueError("DATABASE_URL must be a PostgreSQL connection URL")
         if self.database_pool_min_size < 1:
