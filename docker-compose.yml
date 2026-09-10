@@ -1,5 +1,5 @@
 services:
-  postgres:
+  ctp-postgres:
     image: public.ecr.aws/docker/library/postgres:17-bookworm
     restart: unless-stopped
     environment:
@@ -30,9 +30,9 @@ services:
       # The process must listen on the container interface for published ports
       # to be reachable by an engine running on the Docker host.
       ZMQ_BIND_HOST: 0.0.0.0
-      DATABASE_URL: postgresql://${POSTGRES_USER:-ctp_proxy}:${POSTGRES_PASSWORD:-ctp_proxy_change_me}@postgres:5432/${POSTGRES_DB:-ctp_proxy}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ctp_proxy}:${POSTGRES_PASSWORD:-ctp_proxy_change_me}@ctp-postgres:5432/${POSTGRES_DB:-ctp_proxy}
     depends_on:
-      postgres:
+      ctp-postgres:
         condition: service_healthy
     ports:
       - "${ZMQ_PUB_PORT:-5565}:${ZMQ_PUB_PORT:-5565}"
