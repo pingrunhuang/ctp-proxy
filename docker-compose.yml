@@ -17,6 +17,8 @@ services:
       - "5401:5432"
 
   ctp-proxy:
+    # Fixed locally-administered MAC (licensing / stable identity)
+    mac_address: "02:42:ac:11:00:10"
     build: .
     platform: linux/amd64
     restart: unless-stopped
